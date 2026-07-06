@@ -1,0 +1,157 @@
+{
+  "activityRuns": {
+    "LangSmith": 8912,
+    "Langfuse": 2145,
+    "Log upload": 1487,
+    "OpenTelemetry": 1659
+  },
+  "benchmark": {
+    "yourCostPerResolvedTicket": 1.19
+  },
+  "connect": {
+    "jiraJoinablePct": 61,
+    "runs": 14203,
+    "windowDays": 30
+  },
+  "discoveredFigures": {
+    "jiraRejections": 39,
+    "lateReopenPct": 9,
+    "stripeRefunds": 44
+  },
+  "dispute": {
+    "adjustment": 91.5,
+    "billedPerResolution": 1.5,
+    "claimed": 3214,
+    "fairPrice": 1.06,
+    "incrementalityPct": 71,
+    "renegotiationDeltaPerResolution": 0.44,
+    "reopenedWithin7Days": 61
+  },
+  "engineVersion": "0.1.0",
+  "headers": {
+    "adjustmentIdentified": 91.5,
+    "attributable": 3163,
+    "claimed": 4812,
+    "projectedVerdictImpact": 7350,
+    "spend": 9909,
+    "verified": 4203
+  },
+  "meetingsAttributionSplit": {
+    "agent": 0.62,
+    "human": 0.38
+  },
+  "replay": {
+    "configHash": "a0606ac8c3a29913",
+    "inputHash": "aff10b3d0f02b6bc"
+  },
+  "workflows": [
+    {
+      "attributable": 1989,
+      "claimed": 3214,
+      "costPerVerified": 1.72,
+      "deltaVsMay": -0.06,
+      "grade": "A",
+      "id": "support",
+      "impactPerMonth": 1233,
+      "incrementalityPct": 71,
+      "modelSplit": [
+        {
+          "costPerVerified": 1.19,
+          "model": "claude-fable-5",
+          "share": 0.62
+        },
+        {
+          "costPerVerified": 1.31,
+          "model": "gpt-5",
+          "share": 0.38
+        }
+      ],
+      "qualityPassPct": 87,
+      "sparkline": [
+        1.91,
+        1.86,
+        1.82,
+        1.78,
+        1.72
+      ],
+      "spend": 4821,
+      "verdict": "RENEGOTIATE",
+      "verified": 2802
+    },
+    {
+      "attributable": 486,
+      "claimed": 486,
+      "costPerVerified": 0.42,
+      "deltaVsMay": -0.01,
+      "grade": "C",
+      "id": "workspace",
+      "impactPerMonth": 2140,
+      "incrementalityPct": 100,
+      "qualityPassPct": 100,
+      "sparkline": [
+        0.47,
+        0.45,
+        0.44,
+        0.43,
+        0.42
+      ],
+      "spend": 204,
+      "verdict": "EXPAND",
+      "verified": 486
+    },
+    {
+      "attributable": 570,
+      "claimed": 640,
+      "costPerVerified": 3.3,
+      "deltaVsMay": 0.04,
+      "grade": "B",
+      "id": "docgen",
+      "impactPerMonth": 1077,
+      "incrementalityPct": 95,
+      "modelSplit": [
+        {
+          "costPerVerified": 3.1,
+          "model": "claude-fable-5",
+          "share": 0.85
+        },
+        {
+          "costPerVerified": 1.21,
+          "model": "qwen-3",
+          "share": 0.15
+        }
+      ],
+      "qualityPassPct": 94,
+      "sparkline": [
+        3.19,
+        3.21,
+        3.23,
+        3.26,
+        3.3
+      ],
+      "spend": 1984,
+      "verdict": "REROUTE",
+      "verified": 601
+    },
+    {
+      "attributable": 118,
+      "claimed": 472,
+      "costPerVerified": 9.24,
+      "deltaVsMay": 0.41,
+      "grade": "B",
+      "id": "meetings",
+      "impactPerMonth": 2900,
+      "incrementalityPct": 38,
+      "qualityPassPct": 67,
+      "sparkline": [
+        8.1,
+        8.35,
+        8.6,
+        8.83,
+        9.24
+      ],
+      "spend": 2900,
+      "verdict": "RETIRE",
+      "verified": 314
+    }
+  ]
+}
