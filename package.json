@@ -6,6 +6,9 @@
   "description": "Causa attribution core — the deterministic engine that settles agent outcomes: join, causal ladder, verdicts",
   "scripts": {
     "reconcile": "tsx scripts/generate-ledger.ts",
+    "settle": "tsx src/cli.ts settle",
+    "preflight": "tsx src/cli.ts preflight",
+    "example": "tsx scripts/export-meridian-example.ts && tsx src/cli.ts settle examples/meridian/engagement.json",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

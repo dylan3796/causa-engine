@@ -1,2 +1,4 @@
 node_modules/
 *.tsbuildinfo
+examples/meridian/data/
+examples/meridian/out/

@@ -34,7 +34,30 @@ npm run typecheck
 npm test             # the full suite
 npm run reconcile    # run the pipeline over the Meridian fixtures, assert every
                      # published figure, regenerate generated/*
+npm run preflight -- <engagement.json>   # what's verifiable with what's connected
+npm run settle -- <engagement.json>      # intake → preflight → settled statement
+npm run example      # export Meridian as customer-shaped files, settle via the CLI
 ```
+
+## Tier-0 intake — two exports and a join key
+
+A pilot needs no integration project (CAUSA.md §6.5). An **engagement** is one
+JSON file: where the customer's exports live (CSV or NDJSON), how their columns
+map onto canonical activity/outcome records (declarative `FieldSpec`s — data,
+not code), the outcome contracts, and the verdict rules. Then:
+
+- **Intake** maps every row or rejects it with a reason and row number —
+  rows read = records produced + rejects, always (see `out/intake-report.md`).
+- **Preflight** tells the customer what's verifiable with what they've
+  connected and the evidence-grade ceiling it implies — per contract, per
+  counterfactual design — before anything settles (`out/preflight.md`).
+- **Settle** runs the two engines and writes the statement (`out/statement.md`
+  + canonical `statement.json`).
+
+`examples/meridian/engagement.json` is the working reference. The round-trip
+acceptance test exports the entire Meridian fixture to runs.ndjson +
+outcomes.csv, re-ingests it through this path, and requires the settled
+statement to be **byte-identical** to the one computed directly from fixtures.
 
 ## Verifying results
 
