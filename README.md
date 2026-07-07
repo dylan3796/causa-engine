@@ -65,6 +65,15 @@ statement to be **byte-identical** to the one computed directly from fixtures.
 - **`npm run reconcile`** — fails loudly if any engine-derived figure drifts from the published ledger by a single unit.
 - **`npm test`** — includes the golden acceptance test (the engine must reproduce the published Meridian ledger exactly from event-level records) and the byte-determinism gate (two full pipeline runs must hash identically).
 
+## The statement viewer (`web/`) — a separate deployment
+
+`web/index.html` is a self-contained, zero-dependency viewer that renders settled statements — the funnel, the evidence cells, the uncertainty intervals, the verdicts and their replayable metric snapshots, and the proposed outcomes. It is **generated from live engine output** by `npm run build:viewer`, which settles two example runs and injects them:
+
+- **Meridian** — the reference fixture.
+- **Northwind** — a fresh customer, generated to CSV and settled through the real Tier-0 intake path.
+
+Deploy it as its **own Vercel project**, separate from the Causa landing site (which lives in `dylan3796/compass`): point a new Vercel project at this repo — `vercel.json` already sets the build command to `npm run build:viewer` and the output directory to `web/`, so it regenerates the page from the engine on every deploy and there is nothing else to configure. The viewer is the engine's evidence surface; it is never coupled to the marketing site.
+
 ## The engine is sealed
 
 No clocks, no `Math.random`, no locale formatting, no LLM calls, no UI-framework imports — all test-enforced. Verdicts come from replayable, deterministic logic: a verdict you can't replay is a verdict you can't defend in a billing dispute. LLMs belong (later) in ingestion and interpretation only — never in the verdict path.

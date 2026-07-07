@@ -2,3 +2,5 @@ node_modules/
 *.tsbuildinfo
 examples/meridian/data/
 examples/meridian/out/
+examples/northwind/data/
+examples/northwind/out/

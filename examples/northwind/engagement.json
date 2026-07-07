@@ -1,0 +1,86 @@
+{
+  "name": "Northwind (fictional) · July 2026",
+  "period": { "start": "2026-07-01T00:00:00.000Z", "end": "2026-08-01T00:00:00.000Z" },
+  "actors": [{ "id": "ap-agent", "class": "agent", "name": "AP invoice agent", "vendor": "LedgerBot" }],
+  "activitySources": [
+    {
+      "file": "data/runs.csv",
+      "format": "csv",
+      "source": { "const": "log_upload" },
+      "map": {
+        "id": "run_id",
+        "actorId": "actor",
+        "startedAt": "started_at",
+        "costUsd": "cost_usd",
+        "fields": ["invoice_id"],
+        "claim": { "workflowId": "claim_wf", "claimedEventType": { "const": "invoice_posted" } }
+      }
+    }
+  ],
+  "outcomeSources": [
+    {
+      "file": "data/outcomes.csv",
+      "format": "csv",
+      "source": "source",
+      "map": {
+        "entityKind": "entity_kind",
+        "entityId": "entity_id",
+        "eventType": "event_type",
+        "occurredAt": "occurred_at",
+        "assignment": { "experimentId": "experiment_id", "arm": "arm" }
+      }
+    }
+  ],
+  "contracts": [
+    {
+      "id": "northwind-invoices",
+      "workflowId": "invoices",
+      "event": { "source": "stripe", "eventType": "invoice_posted" },
+      "qualityBar": { "kind": "noEventWithin", "eventType": "correction_logged", "days": 5 },
+      "counterfactual": { "kind": "holdout", "experimentId": "northwind-holdout", "treatedArm": "treated", "controlArm": "control" },
+      "corroboration": [
+        {
+          "kind": "preAgentBaseline",
+          "basis": "occurrence",
+          "months": [
+            { "month": "2026-01", "volume": 130, "costPerOutcomeCents": 850 },
+            { "month": "2026-02", "volume": 132, "costPerOutcomeCents": 830 },
+            { "month": "2026-03", "volume": 136, "costPerOutcomeCents": 845 },
+            { "month": "2026-04", "volume": 139, "costPerOutcomeCents": 820 },
+            { "month": "2026-05", "volume": 127, "costPerOutcomeCents": 860 },
+            { "month": "2026-06", "volume": 141, "costPerOutcomeCents": 815 }
+          ],
+          "match": { "volumeTolerancePct": 25, "minMonths": 3 },
+          "seasonality": { "comparisonMonth": "2026-06", "maxDivergencePct": 15 }
+        }
+      ],
+      "join": { "entityKind": "invoice", "extractorRuleSetId": "northwind-keys" },
+      "billing": { "kind": "perOutcome", "rateCents": 200 },
+      "windowDays": 30,
+      "actorIds": ["ap-agent"],
+      "declaredEventTypes": ["invoice_created", "invoice_posted", "correction_logged"]
+    }
+  ],
+  "extractRuleSets": [
+    { "id": "northwind-keys", "rules": [{ "from": "field", "field": "invoice_id", "entityKind": "invoice" }] }
+  ],
+  "verdictRules": [
+    { "id": "retire-non-incremental-slice", "verdict": "RETIRE", "priority": 1,
+      "when": { "op": "and", "of": [{ "op": "cmp", "metric": "billingKind", "cmp": "eq", "value": "flatMonthly" }, { "op": "cmp", "metric": "minSlicePointDelta", "cmp": "lte", "value": 0 }] },
+      "impact": { "kind": "flatFeeRecovery" } },
+    { "id": "renegotiate-price-gap", "verdict": "RENEGOTIATE", "priority": 2,
+      "when": { "op": "and", "of": [{ "op": "cmp", "metric": "billingKind", "cmp": "eq", "value": "perOutcome" }, { "op": "cmp", "metric": "priceDeltaCents", "cmp": "gte", "value": 5 }] },
+      "impact": { "kind": "renegotiationDelta" } },
+    { "id": "reroute-cheaper-engine", "verdict": "REROUTE", "priority": 3,
+      "when": { "op": "and", "of": [{ "op": "cmp", "metric": "modelSwitchParity", "cmp": "eq", "value": true }, { "op": "cmp", "metric": "modelSwitchSavingsCents", "cmp": "gt", "value": 0 }] },
+      "impact": { "kind": "rerouteDelta" } },
+    { "id": "expand-proven-cheap", "verdict": "EXPAND", "priority": 4,
+      "when": { "op": "and", "of": [{ "op": "cmp", "metric": "qualityPassPct", "cmp": "eq", "value": 100 }, { "op": "cmp", "metric": "expandConfigured", "cmp": "eq", "value": true }, { "op": "cmp", "metric": "costVsBaselinePct", "cmp": "lte", "value": 25 }] },
+      "impact": { "kind": "expandProjection" } },
+    { "id": "reprice-to-market", "verdict": "REPRICE", "priority": 5,
+      "when": { "op": "and", "of": [{ "op": "cmp", "metric": "billingKind", "cmp": "eq", "value": "perOutcome" }, { "op": "cmp", "metric": "priceDeltaCents", "cmp": "lt", "value": 5 }, { "op": "cmp", "metric": "incrementalityPct", "cmp": "gte", "value": 90 }] },
+      "impact": { "kind": "repriceDelta", "targetRateCents": 99 } }
+  ],
+  "activitySourceLabels": { "log_upload": "Log upload" },
+  "boundaryWindowDays": 30
+}

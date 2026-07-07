@@ -9,6 +9,7 @@
     "settle": "tsx src/cli.ts settle",
     "preflight": "tsx src/cli.ts preflight",
     "example": "tsx scripts/export-meridian-example.ts && tsx src/cli.ts settle examples/meridian/engagement.json",
+    "build:viewer": "tsx scripts/build-viewer.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

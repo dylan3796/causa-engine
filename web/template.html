@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Causa — Settled Statement</title>
+<style>
+  :root {
+    --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+    --bg: #ECE7DC; --surface: #FBF9F4; --surface-2: #F3EFE6; --inset: #EEE9DE;
+    --text: #1B1911; --text-dim: #6A6451; --text-faint: #9B947E;
+    --hairline: #E1DBCC; --hairline-strong: #D0C9B6;
+    --verdict: #E8491D; --verdict-tint: #F8E4DB; --ledger: #0E6B3D; --ledger-tint: #DBEAE0;
+    --shadow: 0 1px 2px rgba(27,25,17,.05), 0 8px 24px -12px rgba(27,25,17,.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #100E08; --surface: #1B1911; --surface-2: #221F15; --inset: #16140D;
+      --text: #F1ECDD; --text-dim: #A79F89; --text-faint: #726B57;
+      --hairline: #2C2819; --hairline-strong: #403A28;
+      --verdict: #FF5F31; --verdict-tint: #37190E; --ledger: #47B478; --ledger-tint: #11301F;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #ECE7DC; --surface: #FBF9F4; --surface-2: #F3EFE6; --inset: #EEE9DE;
+    --text: #1B1911; --text-dim: #6A6451; --text-faint: #9B947E;
+    --hairline: #E1DBCC; --hairline-strong: #D0C9B6;
+    --verdict: #E8491D; --verdict-tint: #F8E4DB; --ledger: #0E6B3D; --ledger-tint: #DBEAE0;
+    --shadow: 0 1px 2px rgba(27,25,17,.05), 0 8px 24px -12px rgba(27,25,17,.18);
+  }
+  :root[data-theme="dark"] {
+    --bg: #100E08; --surface: #1B1911; --surface-2: #221F15; --inset: #16140D;
+    --text: #F1ECDD; --text-dim: #A79F89; --text-faint: #726B57;
+    --hairline: #2C2819; --hairline-strong: #403A28;
+    --verdict: #FF5F31; --verdict-tint: #37190E; --ledger: #47B478; --ledger-tint: #11301F;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-sans); line-height: 1.5; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: clamp(20px, 4vw, 56px) clamp(16px, 4vw, 40px) 96px; }
+  .tnum { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+  .mast { border-bottom: 2px solid var(--text); padding-bottom: 18px; margin-bottom: 6px; }
+  .mast-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .wordmark { font-family: var(--font-serif); font-weight: 600; font-size: clamp(30px, 5vw, 44px); letter-spacing: -.01em; margin: 0; }
+  .wordmark .mark { color: var(--verdict); }
+  .kicker { font-family: var(--font-mono); font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--text-dim); margin: 0 0 10px; }
+  .lede { font-family: var(--font-serif); font-size: clamp(15px, 2.2vw, 18px); color: var(--text-dim); max-width: 62ch; margin: 14px 0 0; font-style: italic; }
+  .theme-btn { font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; background: var(--surface); color: var(--text-dim); border: 1px solid var(--hairline-strong); border-radius: 999px; padding: 7px 13px; cursor: pointer; white-space: nowrap; }
+  .theme-btn:hover { color: var(--text); border-color: var(--text); }
+
+  .runs { display: flex; gap: 8px; margin: 26px 0 8px; flex-wrap: wrap; }
+  .run-tab { flex: 1 1 240px; text-align: left; cursor: pointer; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 10px; padding: 13px 16px; transition: border-color .15s, background .15s; font-family: inherit; color: inherit; }
+  .run-tab:hover { border-color: var(--hairline-strong); }
+  .run-tab[aria-selected="true"] { border-color: var(--text); background: var(--surface); box-shadow: var(--shadow); }
+  .run-tab .rt-name { font-family: var(--font-serif); font-size: 18px; font-weight: 600; }
+  .run-tab .rt-desc { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; }
+
+  .statement-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 30px 0 4px; flex-wrap: wrap; }
+  .statement-head h2 { font-family: var(--font-serif); font-size: 22px; margin: 0; font-weight: 600; }
+  .period { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); letter-spacing: .04em; }
+
+  .totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--hairline); border: 1px solid var(--hairline); border-radius: 12px; overflow: hidden; margin: 16px 0 22px; }
+  .tile { background: var(--surface); padding: 15px 16px 16px; }
+  .tile .t-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim); }
+  .tile .t-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: clamp(22px, 3.4vw, 28px); font-weight: 500; margin-top: 6px; letter-spacing: -.01em; }
+  .tile .t-sub { font-size: 11.5px; color: var(--text-faint); margin-top: 3px; }
+  .tile.accent .t-value { color: var(--verdict); }
+  .tile.ledger .t-value { color: var(--ledger); }
+
+  .funnel { background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px; padding: 20px 20px 22px; box-shadow: var(--shadow); }
+  .fn-title { font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--text-dim); margin: 0 0 16px; }
+  .stage { margin-bottom: 6px; }
+  .stage-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
+  .stage-name { font-family: var(--font-serif); font-size: 15px; }
+  .stage-name b { font-weight: 600; }
+  .stage-val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 500; }
+  .track { height: 12px; border-radius: 3px; background: var(--inset); overflow: hidden; }
+  .fill { height: 100%; border-radius: 3px; }
+  .fill.claimed { background: var(--hairline-strong); }
+  .fill.verified { background: linear-gradient(90deg, var(--text-dim), var(--text)); }
+  .fill.attrib { background: var(--ledger); }
+  .drop { display: flex; flex-wrap: wrap; gap: 6px 8px; padding: 8px 0 12px 2px; }
+  .drop .arm { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+  .chip { font-family: var(--font-mono); font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--hairline-strong); color: var(--text-dim); white-space: nowrap; background: var(--surface-2); }
+  .chip b { color: var(--text); font-weight: 600; }
+
+  .section-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--text-dim); margin: 38px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--hairline); }
+  .wf { background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
+  .wf-sum { width: 100%; text-align: left; background: none; border: 0; cursor: pointer; color: inherit; font-family: inherit; display: grid; grid-template-columns: 1fr auto; gap: 8px 18px; align-items: center; padding: 16px 18px; }
+  .wf-sum:hover { background: var(--surface-2); }
+  .wf-id { font-family: var(--font-serif); font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .caret { color: var(--text-faint); font-family: var(--font-mono); font-size: 13px; transition: transform .2s; }
+  .wf[open-state="1"] .caret { transform: rotate(90deg); }
+  .wf-metrics { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+  .metric { text-align: right; }
+  .metric .m-v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 14px; font-weight: 500; }
+  .metric .m-l { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-faint); }
+  .miniflow { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+  .miniflow .mf-track { flex: 1; height: 7px; border-radius: 2px; background: var(--inset); overflow: hidden; display: flex; }
+  .miniflow .mf-seg { height: 100%; }
+  .miniflow .mf-verified { background: var(--text-dim); }
+  .miniflow .mf-attrib { background: var(--ledger); }
+  .miniflow .mf-cap { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); white-space: nowrap; }
+
+  .stamp { font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; border: 1.5px solid var(--verdict); color: var(--verdict); padding: 4px 9px; border-radius: 5px; background: var(--verdict-tint); white-space: nowrap; }
+  .stamp.expand { border-color: var(--ledger); color: var(--ledger); background: var(--ledger-tint); }
+
+  .grade { display: inline-flex; align-items: center; gap: 6px; }
+  .grade .g-letter { font-family: var(--font-mono); font-weight: 600; font-size: 12px; }
+  .bars { display: inline-flex; gap: 2px; align-items: flex-end; height: 12px; }
+  .bars i { width: 3px; background: var(--hairline-strong); border-radius: 1px; display: block; }
+  .bars i.on { background: var(--text); }
+  .bars i:nth-child(1){height:4px} .bars i:nth-child(2){height:7px} .bars i:nth-child(3){height:10px} .bars i:nth-child(4){height:12px}
+
+  .wf-body { border-top: 1px solid var(--hairline); padding: 0 18px; max-height: 0; overflow: hidden; transition: max-height .28s ease; }
+  .wf[open-state="1"] .wf-body { max-height: 5000px; }
+  .ev { padding: 18px 0; border-bottom: 1px dashed var(--hairline); }
+  .ev:last-child { border-bottom: 0; }
+  .ev-h { font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-dim); margin: 0 0 12px; display: flex; gap: 10px; align-items: center; }
+  .ev-h .spacer { flex: 1; height: 1px; background: var(--hairline); }
+  .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 18px; }
+  .kv .k { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); }
+  .kv .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 14px; margin-top: 1px; }
+  .kv .v.big { font-size: 17px; font-weight: 500; }
+  .kv .v .accent { color: var(--verdict); }
+  .kv .v .ledger { color: var(--ledger); }
+
+  .cells { overflow-x: auto; margin-top: 12px; }
+  table.cell-tbl { border-collapse: collapse; width: 100%; min-width: 320px; }
+  table.cell-tbl th, table.cell-tbl td { text-align: right; padding: 6px 10px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 12.5px; border-bottom: 1px solid var(--hairline); }
+  table.cell-tbl th { color: var(--text-faint); font-weight: 500; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+  table.cell-tbl td:first-child, table.cell-tbl th:first-child { text-align: left; color: var(--text); }
+  table.cell-tbl tr.neg td { color: var(--verdict); }
+
+  .interval { margin-top: 12px; }
+  .iv-track { position: relative; height: 30px; margin: 6px 0 4px; }
+  .iv-base { position: absolute; top: 13px; left: 0; right: 0; height: 4px; background: var(--inset); border-radius: 2px; }
+  .iv-band { position: absolute; top: 11px; height: 8px; background: var(--verdict-tint); border: 1px solid var(--verdict); border-radius: 4px; }
+  .iv-point { position: absolute; top: 6px; width: 2px; height: 18px; background: var(--verdict); }
+  .iv-scale { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); }
+
+  .bars-h { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .barrow { display: grid; grid-template-columns: 130px 1fr auto; gap: 10px; align-items: center; }
+  .barrow .b-name { font-family: var(--font-mono); font-size: 12px; }
+  .barrow .b-track { height: 9px; background: var(--inset); border-radius: 2px; overflow: hidden; }
+  .barrow .b-fill { height: 100%; background: var(--text-dim); border-radius: 2px; }
+  .barrow .b-val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+
+  .notes { margin: 12px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .notes li { font-family: var(--font-serif); font-size: 13.5px; color: var(--text-dim); padding-left: 16px; position: relative; }
+  .notes li::before { content: "—"; position: absolute; left: 0; color: var(--text-faint); }
+  .assump { margin-top: 10px; }
+  .assump .a-lbl { font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); }
+  .assump li { font-size: 12.5px; }
+
+  .dispute-chain { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; font-family: var(--font-mono); }
+  .dc-step { text-align: center; }
+  .dc-step .dc-v { font-variant-numeric: tabular-nums; font-size: 17px; font-weight: 500; }
+  .dc-step .dc-l { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); margin-top: 2px; }
+  .dc-arrow { color: var(--text-faint); font-size: 14px; }
+  .dc-step.result .dc-v { color: var(--verdict); }
+
+  .snapshot { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  .snapshot .sn { font-family: var(--font-mono); font-size: 11px; background: var(--inset); border-radius: 4px; padding: 3px 7px; color: var(--text-dim); }
+  .snapshot .sn b { color: var(--text); font-weight: 600; }
+
+  .replay { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); margin-top: 4px; word-break: break-all; }
+  .replay b { color: var(--text-dim); }
+
+  .cand { background: var(--surface); border: 1px solid var(--hairline); border-left: 3px solid var(--verdict); border-radius: 10px; padding: 15px 18px; margin-bottom: 10px; }
+  .cand.propose { border-left-color: var(--ledger); }
+  .cand-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .cand-kind { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim); }
+  .cand-title { font-family: var(--font-serif); font-size: 16px; font-weight: 600; margin: 2px 0 0; }
+  .cand-count { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 500; }
+  .cand p { font-size: 13.5px; color: var(--text-dim); margin: 8px 0 0; max-width: 70ch; }
+  .cand .draft { font-family: var(--font-mono); font-size: 11.5px; background: var(--inset); border-radius: 6px; padding: 8px 10px; margin-top: 10px; color: var(--text-dim); overflow-x: auto; }
+  .cand .draft b { color: var(--text); }
+  .cand .samples { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); margin-top: 8px; }
+
+  .key { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 24px; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 12px; padding: 18px 20px; margin: 8px 0 4px; }
+  .key h4 { font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); margin: 0 0 8px; }
+  .key .kd { font-size: 12.5px; color: var(--text-dim); line-height: 1.45; }
+  .key .kd b { color: var(--text); font-family: var(--font-serif); font-weight: 600; }
+
+  .foot { margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--hairline); font-size: 12px; color: var(--text-faint); font-family: var(--font-mono); line-height: 1.7; }
+
+  @media (max-width: 560px) {
+    .wf-sum { grid-template-columns: 1fr; }
+    .wf-metrics { justify-content: flex-start; }
+    .barrow { grid-template-columns: 90px 1fr auto; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="mast">
+    <p class="kicker" id="kicker">Independent settlement</p>
+    <div class="mast-row">
+      <h1 class="wordmark">Caus<span class="mark">a</span> — Settled Statement</h1>
+      <button class="theme-btn" id="themeBtn" type="button" aria-label="Toggle light or dark theme">Theme</button>
+    </div>
+    <p class="lede">The vendor grades its own homework; this is the independent record that checks the work. Every number below traces to the evidence that produced it — and to a replay fingerprint that reproduces it.</p>
+  </header>
+
+  <div class="runs" id="runs" role="tablist" aria-label="Choose a settled run"></div>
+
+  <div class="statement-head">
+    <h2 id="stmtTitle">—</h2>
+    <span class="period tnum" id="stmtPeriod">—</span>
+  </div>
+
+  <div class="totals" id="totals"></div>
+
+  <div class="funnel">
+    <p class="fn-title">Settlement funnel — claimed → verified → attributable</p>
+    <div id="funnel"></div>
+    <p class="replay" id="stmtReplay"></p>
+  </div>
+
+  <div class="section-label">Workflows — the workpapers behind each line</div>
+  <div id="workflows"></div>
+
+  <div class="section-label">Proposed outcomes — what the engine read that no contract covers yet</div>
+  <div id="candidates"></div>
+
+  <div class="section-label">Reading this statement</div>
+  <div class="key">
+    <div><h4>The funnel</h4><p class="kd"><b>Claimed</b> is what the vendor says it did. <b>Verified</b> passed the quality bar in a system of record. <b>Attributable</b> is what wouldn't have happened anyway — the counterfactual subtracted.</p></div>
+    <div><h4>Evidence grade</h4><p class="kd"><b>A</b> held-out control · <b>B</b> natural experiment · <b>C</b> pre-agent baseline · <b>D</b> rules. Stronger proof, more bars filled.</p></div>
+    <div><h4>Verdicts</h4><p class="kd"><b>Expand</b> reads in green — it's working, do more. <b>Renegotiate · Reroute · Retire · Reprice</b> read in verdict red — an adjustment against the invoice.</p></div>
+    <div><h4>Replay</h4><p class="kd">Every verdict carries an input hash, a config hash, and the engine version. Same three, same statement — reproducible in a billing dispute.</p></div>
+  </div>
+
+  <p class="foot" id="foot"></p>
+</div>
+
+<script>
+"use strict";
+const RUNS = __RUNS__;
+const ENGINE_VERSION = __ENGINE_VERSION__;
+const STMTS = Object.fromEntries(RUNS.map((r) => [r.key, r]));
+
+const gi = (n) => Math.round(n).toLocaleString("en-US");
+const usdC = (c, dec = 2) => "$" + (c / 100).toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+const usd0 = (d) => "$" + d.toLocaleString("en-US");
+const pct = (num, den) => Math.round((100 * num) / den);
+const GRADE_BARS = { A: 4, B: 3, C: 2, D: 1 };
+const WF_TITLES = { support: "Support tickets", workspace: "New-hire accounts", docgen: "Meeting notes → Jira", meetings: "Sales meetings", invoices: "Invoice posting" };
+const CAND_TITLES = { qualityBarBoundary: "Outcomes slipping just past the quality bar", unpricedQualityFailures: "Quality failures nobody is pricing", uncontractedOutcome: "Outcomes in the record with no contract", duplicateClaims: "The same outcome billed twice" };
+const esc = (s) => String(s).replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
+
+function gradeEl(grade) {
+  const on = GRADE_BARS[grade] || 0;
+  let bars = "";
+  for (let i = 1; i <= 4; i++) bars += `<i class="${i <= on ? "on" : ""}"></i>`;
+  return `<span class="grade" title="Evidence grade ${grade}"><span class="bars">${bars}</span><span class="g-letter">${grade}</span></span>`;
+}
+function stampEl(verdict) { return `<span class="${verdict === "EXPAND" ? "stamp expand" : "stamp"}">${verdict}</span>`; }
+
+function renderFunnel(el, claimed, verified, attributable, gradeNote) {
+  el.innerHTML = `
+    <div class="stage"><div class="stage-top"><span class="stage-name"><b>Claimed</b> — what the vendor reported</span><span class="stage-val tnum">${gi(claimed)}</span></div><div class="track"><div class="fill claimed" style="width:100%"></div></div></div>
+    <div class="stage"><div class="stage-top"><span class="stage-name"><b>Verified</b> — held up in the record</span><span class="stage-val tnum">${gi(verified)}</span></div><div class="track"><div class="fill verified" style="width:${(verified / claimed) * 100}%"></div></div></div>
+    <div class="stage"><div class="stage-top"><span class="stage-name"><b>Attributable</b> — wouldn't have happened anyway</span><span class="stage-val tnum">${gi(attributable)}</span></div><div class="track"><div class="fill attrib" style="width:${(attributable / claimed) * 100}%"></div></div></div>
+    ${gradeNote}`;
+}
+function cellRows(cells) {
+  let rows = "";
+  for (const k of Object.keys(cells).sort()) {
+    const c = cells[k];
+    rows += `<tr><td>${esc(k)}</td><td>${gi(c.k)}</td><td>${gi(c.n)}</td><td>${c.n ? pct(c.k, c.n) + "%" : "—"}</td></tr>`;
+  }
+  return `<div class="cells"><table class="cell-tbl"><thead><tr><th>cell</th><th>passing (k)</th><th>total (n)</th><th>rate</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function sliceRows(perSlice) {
+  let rows = "";
+  for (const s of perSlice) rows += `<tr class="${s.pointDelta < 0 ? "neg" : ""}"><td>${esc(s.slice)}</td><td>${gi(s.verified)}</td><td>${gi(s.counterfactual)}</td><td>${gi(s.attributable)}</td><td>${s.pointDelta >= 0 ? "+" : ""}${s.pointDelta.toFixed(1)}</td></tr>`;
+  return `<div class="cells"><table class="cell-tbl"><thead><tr><th>slice</th><th>verified</th><th>expected anyway</th><th>attributable</th><th>point Δ</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function intervalEl(iv, point) {
+  const lo = iv.lo * 100, hi = iv.hi * 100, clamp = (x) => Math.max(0, Math.min(100, x));
+  return `<div class="interval"><div class="ev-h" style="margin-bottom:2px">95% interval on incrementality<span class="spacer"></span></div>
+    <div class="iv-track"><div class="iv-base"></div><div class="iv-band" style="left:${clamp(lo)}%; right:${clamp(100 - hi)}%"></div><div class="iv-point" style="left:${clamp(point)}%"></div></div>
+    <div class="iv-scale"><span>0%</span><span>point estimate ${Math.round(point)}% · band ${lo.toFixed(1)}%–${hi.toFixed(1)}%</span><span>100%</span></div></div>`;
+}
+function modelBars(modelSplit) {
+  const max = Math.max(...modelSplit.map((m) => m.share));
+  return `<div class="bars-h">${modelSplit.map((m) => `<div class="barrow"><span class="b-name">${esc(m.model)}</span><div class="b-track"><div class="b-fill" style="width:${(m.share / max) * 100}%"></div></div><span class="b-val">${Math.round(m.share * 100)}% · ${usdC(m.marginalCostPerVerifiedCents)}/verified</span></div>`).join("")}</div>`;
+}
+function notesEl(notes, assumptions) {
+  let h = "";
+  if (notes && notes.length) h += `<ul class="notes">${notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>`;
+  if (assumptions && assumptions.length) h += `<div class="assump"><div class="a-lbl">Assumptions declared</div><ul class="notes">${assumptions.map((a) => `<li>${esc(a)}</li>`).join("")}</ul></div>`;
+  return h;
+}
+function renderWorkflow(w, i) {
+  const est = w.estimator, incr = pct(est.incrementality.num, est.incrementality.den);
+  const dropTotal = w.drop.didNotHappen + w.drop.failedQualityBar + w.drop.unjoinable + w.drop.duplicateClaim;
+  const summary = `<button class="wf-sum" type="button" aria-expanded="${i === 0 ? "true" : "false"}">
+      <span class="wf-id"><span class="caret">▶</span>${esc(WF_TITLES[w.workflowId] || w.workflowId)}</span>
+      <span class="wf-metrics">
+        <span class="metric"><div class="m-v">${gradeEl(est.grade)}</div><div class="m-l">evidence</div></span>
+        <span class="metric"><div class="m-v">${usdC(w.spendCents)}</div><div class="m-l">spend</div></span>
+        <span class="metric"><div class="m-v">${usdC(w.costPerVerifiedCents)}</div><div class="m-l">$/verified</div></span>
+        <span class="metric"><div class="m-v">${incr}%</div><div class="m-l">incremental</div></span>
+        ${stampEl(w.verdict.verdict)}
+      </span>
+      <span class="miniflow"><span class="mf-cap tnum">${gi(w.claimed)}</span><span class="mf-track"><span class="mf-seg mf-verified" style="width:${(w.verified / w.claimed) * 100}%"></span><span class="mf-seg mf-attrib" style="width:${(w.attributable / w.claimed) * 100}%"></span></span><span class="mf-cap tnum">${gi(w.attributable)} attributable</span></span>
+    </button>`;
+  let dropChips = "";
+  for (const [k, label] of [["didNotHappen", "didn’t happen"], ["failedQualityBar", "failed quality bar"], ["unjoinable", "unjoinable"], ["duplicateClaim", "duplicate / double-billed"]]) if (w.drop[k] > 0) dropChips += `<span class="chip"><b>${gi(w.drop[k])}</b> ${label}</span>`;
+  let estBlock = `<div class="kv">
+      <div><div class="k">design</div><div class="v">${esc(est.designKind)} · grade ${est.grade}</div></div>
+      <div><div class="k">counterfactual</div><div class="v">${gi(est.counterfactualCount)} would have happened anyway</div></div>
+      <div><div class="k">attributable</div><div class="v big"><span class="ledger">${gi(est.attributable)}</span> of ${gi(est.incrementality.den)}</div></div>
+    </div>` + cellRows(est.cells);
+  if (est.interval) estBlock += intervalEl(est.interval, incr);
+  if (est.perSlice) estBlock += sliceRows(est.perSlice);
+  estBlock += notesEl(est.notes, est.assumptions);
+  let corr = "";
+  if (est.corroboration) for (const c of est.corroboration) {
+    corr += `<div class="ev"><p class="ev-h">Second opinion — ${esc(c.designKind)} · grade ${c.grade}<span class="spacer"></span>${gradeEl(c.grade)}</p>
+      <div class="kv"><div><div class="k">counterfactual</div><div class="v">${gi(c.counterfactualCount)} anyway → <span class="ledger">${gi(c.attributable)}</span> attributable</div></div>
+      <div><div class="k">incremental</div><div class="v">${pct(c.incrementality.num, c.incrementality.den)}%</div></div>
+      ${c.baselineCostPerOutcomeCents ? `<div><div class="k">baseline cost</div><div class="v">${usdC(c.baselineCostPerOutcomeCents)}/outcome</div></div>` : ""}</div>${notesEl(c.notes, c.assumptions)}</div>`;
+  }
+  let econ = "";
+  if (w.modelSplit) econ += `<div class="ev"><p class="ev-h">Cost by model<span class="spacer"></span></p>${modelBars(w.modelSplit)}</div>`;
+  if (w.actorSplit) {
+    const a = w.actorSplit;
+    econ += `<div class="ev"><p class="ev-h">Who did the work (${esc(a.rule)})<span class="spacer"></span></p><div class="bars-h">
+        <div class="barrow"><span class="b-name">agent</span><div class="b-track"><div class="b-fill" style="width:${a.agent * 100}%"></div></div><span class="b-val">${Math.round(a.agent * 100)}% · ${gi(a.agentTouches)} touches</span></div>
+        <div class="barrow"><span class="b-name">human</span><div class="b-track"><div class="b-fill" style="width:${a.human * 100}%"></div></div><span class="b-val">${Math.round(a.human * 100)}% · ${gi(a.humanTouches)} touches</span></div></div></div>`;
+  }
+  let dispute = "";
+  if (w.dispute) {
+    const d = w.dispute;
+    dispute = `<div class="ev"><p class="ev-h">Dispute — the fair-price chain<span class="spacer"></span></p><div class="dispute-chain">
+        <div class="dc-step"><div class="dc-v tnum">${usdC(d.billedPerOutcomeCents)}</div><div class="dc-l">billed / outcome</div></div><span class="dc-arrow">×</span>
+        <div class="dc-step"><div class="dc-v tnum">${d.incrementalityPct}%</div><div class="dc-l">incremental</div></div><span class="dc-arrow">→</span>
+        <div class="dc-step"><div class="dc-v tnum">${usdC(d.fairPriceCents)}</div><div class="dc-l">fair price</div></div><span class="dc-arrow">·</span>
+        <div class="dc-step result"><div class="dc-v tnum">${usdC(d.deltaPerOutcomeCents)}</div><div class="dc-l">delta / outcome</div></div><span class="dc-arrow">+</span>
+        <div class="dc-step result"><div class="dc-v tnum">${usdC(d.adjustmentCents)}</div><div class="dc-l">${gi(d.qualityFailures)} failures clawed back</div></div></div></div>`;
+  }
+  const snap = Object.entries(w.verdict.inputs).sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([k, v]) => `<span class="sn">${esc(k)}=<b>${esc(v)}</b></span>`).join("");
+  const verdictBlock = `<div class="ev"><p class="ev-h">Verdict<span class="spacer"></span></p>
+      <div class="kv" style="align-items:center"><div>${stampEl(w.verdict.verdict)} <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">rule <b>${esc(w.verdict.ruleId)}</b></span></div>
+      <div><div class="k">projected impact</div><div class="v big"><span class="${w.verdict.verdict === "EXPAND" ? "ledger" : "accent"}">${usd0(w.verdict.impactPerMonthDollars)}/mo</span></div></div></div>
+      <div style="margin-top:12px"><div class="k" style="font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint)">the numbers the rule saw (replayable)</div><div class="snapshot">${snap}</div></div></div>`;
+  const cov = w.coverage;
+  const covBlock = `<div class="ev"><p class="ev-h">Coverage &amp; replay<span class="spacer"></span></p>
+      <div class="kv"><div><div class="k">join coverage</div><div class="v">${gi(cov.runsWithKey)} / ${gi(cov.runsTotal)} runs carry a key · ${cov.runKeyPct}%</div></div>
+      <div><div class="k">claims joined</div><div class="v">${gi(cov.claimsJoined)} / ${gi(cov.claimsTotal)}</div></div></div>
+      <p class="replay"><b>input</b> ${esc(w.verdict.replay.inputHash)} · <b>config</b> ${esc(w.verdict.replay.configHash)} · <b>engine</b> ${esc(w.verdict.replay.engineVersion)}</p></div>`;
+  const body = `<div class="wf-body">
+      <div class="ev"><p class="ev-h">Funnel<span class="spacer"></span>${gi(dropTotal)} dropped</p>
+        <div class="drop">${dropChips}<span class="chip" style="border-color:var(--ledger);color:var(--ledger)"><b>−${gi(est.counterfactualCount)}</b> would have happened anyway</span></div></div>
+      <div class="ev"><p class="ev-h">Causal evidence<span class="spacer"></span>${gradeEl(est.grade)}</p>${estBlock}</div>
+      ${corr}${econ}${dispute}${verdictBlock}${covBlock}</div>`;
+  return `<div class="wf" open-state="${i === 0 ? "1" : "0"}">${summary}${body}</div>`;
+}
+function renderCandidate(c) {
+  const propose = c.kind === "uncontractedOutcome" || c.kind === "qualityBarBoundary";
+  let draft = "";
+  if (c.draft) {
+    const qb = c.draft.suggestedQualityBar ? esc(JSON.stringify(c.draft.suggestedQualityBar)) : "to be defined with the customer";
+    draft = `<div class="draft">Draft contract → event <b>${esc(c.draft.eventType)}</b> in <b>${esc(c.draft.source)}</b>, joined on <b>${esc(c.draft.entityKind)}</b>, quality bar <b>${qb}</b> — awaiting confirmation</div>`;
+  }
+  const samples = c.sampleEntities && c.sampleEntities.length ? `<div class="samples">check in the source system → ${c.sampleEntities.map(esc).join(" · ")}</div>` : "";
+  return `<div class="cand ${propose ? "propose" : ""}"><div class="cand-top">
+      <div><div class="cand-kind">${esc(c.kind)}${c.workflowId ? " · via " + esc(c.workflowId) : ""}</div><div class="cand-title">${esc(CAND_TITLES[c.kind] || c.kind)}</div></div>
+      <div class="cand-count tnum">${gi(c.count)}</div></div>
+      ${c.context.map((l) => `<p>${esc(l)}</p>`).join("")}${draft}${samples}</div>`;
+}
+function render(runKey) {
+  const run = STMTS[runKey], s = run.data, h = s.headers;
+  document.getElementById("stmtTitle").textContent = run.name;
+  document.getElementById("stmtPeriod").textContent = run.period;
+  document.getElementById("totals").innerHTML = `
+    <div class="tile"><div class="t-label">Verified outcomes</div><div class="t-value">${gi(h.verified)}</div><div class="t-sub">of ${gi(h.claimed)} claimed</div></div>
+    <div class="tile ledger"><div class="t-label">Attributable</div><div class="t-value">${gi(h.attributable)}</div><div class="t-sub">wouldn’t have happened anyway</div></div>
+    <div class="tile"><div class="t-label">Spend</div><div class="t-value">${usdC(h.spendCents, 0)}</div><div class="t-sub">across ${gi(s.totalRuns)} agent runs</div></div>
+    <div class="tile accent"><div class="t-label">Adjustment found</div><div class="t-value">${usdC(h.adjustmentCents)}</div><div class="t-sub">quality failures to claw back</div></div>
+    <div class="tile accent"><div class="t-label">Verdict impact</div><div class="t-value">${usd0(h.projectedVerdictImpactDollars)}</div><div class="t-sub">per month, if acted on</div></div>`;
+  const gradeNote = `<div class="drop" style="padding-top:14px"><span class="arm">The step from verified to attributable is the counterfactual, subtracted honestly — </span><span class="chip" style="border-color:var(--ledger);color:var(--ledger)">${gi(h.verified - h.attributable)} would have happened anyway</span></div>`;
+  renderFunnel(document.getElementById("funnel"), h.claimed, h.verified, h.attributable, gradeNote);
+  document.getElementById("stmtReplay").innerHTML = `<b>replay</b> — input ${esc(s.replay.inputHash)} · config ${esc(s.replay.configHash)} · engine ${esc(s.replay.engineVersion)}`;
+  document.getElementById("workflows").innerHTML = s.workflows.map((w, i) => renderWorkflow(w, i)).join("");
+  document.getElementById("candidates").innerHTML = s.candidates.map(renderCandidate).join("");
+  document.getElementById("foot").innerHTML = `${esc(run.subject)}<br>Rendered from the engine’s own statement.json — the same artifact the CLI writes. Nothing here is hand-entered.`;
+  document.querySelectorAll(".wf").forEach((wf) => {
+    const btn = wf.querySelector(".wf-sum");
+    btn.addEventListener("click", () => {
+      const open = wf.getAttribute("open-state") === "1";
+      wf.setAttribute("open-state", open ? "0" : "1");
+      btn.setAttribute("aria-expanded", open ? "false" : "true");
+    });
+  });
+}
+// build tabs from RUNS
+const runsEl = document.getElementById("runs");
+runsEl.innerHTML = RUNS.map((r, i) => `<button class="run-tab" role="tab" aria-selected="${i === 0 ? "true" : "false"}" data-run="${esc(r.key)}" type="button"><div class="rt-name">${esc(r.name)}</div><div class="rt-desc">${esc(r.desc)}</div></button>`).join("");
+runsEl.querySelectorAll(".run-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    runsEl.querySelectorAll(".run-tab").forEach((t) => t.setAttribute("aria-selected", "false"));
+    tab.setAttribute("aria-selected", "true");
+    render(tab.dataset.run);
+  });
+});
+document.getElementById("kicker").textContent = "Independent settlement · engine v" + ENGINE_VERSION;
+const root = document.documentElement;
+document.getElementById("themeBtn").addEventListener("click", () => {
+  const cur = root.getAttribute("data-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  root.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
+});
+render(RUNS[0].key);
+</script>
+</body>
+</html>
