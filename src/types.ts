@@ -16,17 +16,25 @@ import type { Predicate } from "./predicates";
 
 /* ---------------------------------- identity --------------------------------- */
 
-export type SourceId =
-  | "langsmith"
-  | "langfuse"
-  | "otel"
-  | "log_upload"
-  | "zendesk"
-  | "salesforce"
-  | "jira"
-  | "servicenow"
-  | "stripe"
-  | "gdrive";
+/**
+ * A source system identifier (lowercase token, e.g. "zendesk", "netsuite").
+ * Real organizations run systems we haven't named — the engine accepts any
+ * well-formed token; the list below is the KNOWN vocabulary, not a gate.
+ */
+export type SourceId = string;
+
+export const KNOWN_SOURCE_IDS: readonly string[] = [
+  "langsmith",
+  "langfuse",
+  "otel",
+  "log_upload",
+  "zendesk",
+  "salesforce",
+  "jira",
+  "servicenow",
+  "stripe",
+  "gdrive",
+];
 
 export type ActorClass = "agent" | "human";
 
