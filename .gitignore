@@ -4,3 +4,4 @@ examples/meridian/data/
 examples/meridian/out/
 examples/northwind/data/
 examples/northwind/out/
+web/_*.html
