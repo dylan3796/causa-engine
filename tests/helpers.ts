@@ -64,7 +64,8 @@ export function ev(
   ticketId: string,
   eventType: string,
   atMs: number,
-  assignment?: { experimentId: string; arm: string }
+  assignment?: { experimentId: string; arm: string },
+  fields?: Record<string, string | number>
 ): OutcomeEvent {
   return {
     id: `e-${++seq}`,
@@ -73,6 +74,7 @@ export function ev(
     eventType,
     occurredAt: iso(atMs),
     assignment,
+    fields,
   };
 }
 

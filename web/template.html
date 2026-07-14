@@ -302,6 +302,16 @@ function notesEl(notes, assumptions) {
   if (assumptions && assumptions.length) h += `<div class="assump"><div class="a-lbl">Assumptions declared</div><ul class="notes">${assumptions.map((a) => `<li>${esc(a)}</li>`).join("")}</ul></div>`;
   return h;
 }
+function robustnessEl(r) {
+  if (!r) return "";
+  const rows = [];
+  if (r.breakEven) rows.push(`<li><b>Break-even:</b> ${r.breakEven.factor === null ? esc(r.breakEven.note) : `×${r.breakEven.factor} — ${esc(r.breakEven.note)}`}</li>`);
+  if (r.placebo) rows.push(`<li><b>Placebo:</b> worst |Δ| ${r.placebo.deltaPts}pts (limit ±${r.placebo.maxAbsDeltaPts}pts) — ${r.placebo.pass ? "pass" : `<b style="color:var(--accent)">FAIL</b>`}${r.placebo.notes.map((n) => `<br>· ${esc(n)}`).join("")}</li>`);
+  if (r.leaveOneOut) rows.push(`<li><b>Leave-one-out:</b> ${esc(r.leaveOneOut.note)}</li>`);
+  if (r.postStratified) rows.push(`<li><b>Post-stratified:</b> ${esc(r.postStratified.note)} Max stratum mix divergence ${r.postStratified.maxShareDivergencePts}pts.</li>`);
+  if (!rows.length) return "";
+  return `<div class="assump"><div class="a-lbl">Robustness — how wrong the measurement would have to be</div><ul class="notes">${rows.join("")}</ul></div>`;
+}
 function renderWorkflow(w, i) {
   const est = w.estimator, incr = pct(est.incrementality.num, est.incrementality.den);
   const dropTotal = w.drop.didNotHappen + w.drop.failedQualityBar + w.drop.unjoinable + w.drop.duplicateClaim;
@@ -325,13 +335,14 @@ function renderWorkflow(w, i) {
     </div>` + cellRows(est.cells);
   if (est.interval) estBlock += intervalEl(est.interval, incr);
   if (est.perSlice) estBlock += sliceRows(est.perSlice);
+  estBlock += robustnessEl(est.robustness);
   estBlock += notesEl(est.notes, est.assumptions);
   let corr = "";
   if (est.corroboration) for (const c of est.corroboration) {
     corr += `<div class="ev"><p class="ev-h">Second opinion — ${esc(c.designKind)} · grade ${c.grade}<span class="spacer"></span>${gradeEl(c.grade)}</p>
       <div class="kv"><div><div class="k">counterfactual</div><div class="v">${gi(c.counterfactualCount)} anyway → <span class="ledger">${gi(c.attributable)}</span> attributable</div></div>
       <div><div class="k">incremental</div><div class="v">${pct(c.incrementality.num, c.incrementality.den)}%</div></div>
-      ${c.baselineCostPerOutcomeCents ? `<div><div class="k">baseline cost</div><div class="v">${usdC(c.baselineCostPerOutcomeCents)}/outcome</div></div>` : ""}</div>${notesEl(c.notes, c.assumptions)}</div>`;
+      ${c.baselineCostPerOutcomeCents ? `<div><div class="k">baseline cost</div><div class="v">${usdC(c.baselineCostPerOutcomeCents)}/outcome</div></div>` : ""}</div>${robustnessEl(c.robustness)}${notesEl(c.notes, c.assumptions)}</div>`;
   }
   let econ = "";
   if (w.modelSplit) econ += `<div class="ev"><p class="ev-h">Cost by model<span class="spacer"></span></p>${modelBars(w.modelSplit)}</div>`;
@@ -340,6 +351,12 @@ function renderWorkflow(w, i) {
     econ += `<div class="ev"><p class="ev-h">Who did the work (${esc(a.rule)})<span class="spacer"></span></p><div class="bars-h">
         <div class="barrow"><span class="b-name">agent</span><div class="b-track"><div class="b-fill" style="width:${a.agent * 100}%"></div></div><span class="b-val">${Math.round(a.agent * 100)}% · ${gi(a.agentTouches)} touches</span></div>
         <div class="barrow"><span class="b-name">human</span><div class="b-track"><div class="b-fill" style="width:${a.human * 100}%"></div></div><span class="b-val">${Math.round(a.human * 100)}% · ${gi(a.humanTouches)} touches</span></div></div></div>`;
+  }
+  if (w.actorShapley) {
+    const sh = w.actorShapley;
+    econ += `<div class="ev"><p class="ev-h">Credit (${esc(sh.method)})<span class="spacer"></span>${gi(sh.coverage.entities)} entities · ${gi(sh.coverage.observedCoalitions)} observed coalitions</p><div class="bars-h">
+        ${sh.perActor.map((a) => `<div class="barrow"><span class="b-name">${esc(a.actorId)}</span><div class="b-track"><div class="b-fill" style="width:${a.share * 100}%"></div></div><span class="b-val">${Math.round(a.share * 100)}% · ${gi(a.verifiedEquivalent)} verified-equivalent</span></div>`).join("")}</div>
+        ${notesEl(null, sh.assumptions)}</div>`;
   }
   let dispute = "";
   if (w.dispute) {
@@ -361,11 +378,18 @@ function renderWorkflow(w, i) {
       <div class="kv"><div><div class="k">join coverage</div><div class="v">${gi(cov.runsWithKey)} / ${gi(cov.runsTotal)} runs carry a key · ${cov.runKeyPct}%</div></div>
       <div><div class="k">claims joined</div><div class="v">${gi(cov.claimsJoined)} / ${gi(cov.claimsTotal)}</div></div></div>
       <p class="replay"><b>input</b> ${esc(w.verdict.replay.inputHash)} · <b>config</b> ${esc(w.verdict.replay.configHash)} · <b>engine</b> ${esc(w.verdict.replay.engineVersion)}</p></div>`;
+  const integ = w.integrity;
+  const integBlock = !integ ? "" : integ.findings.length === 0
+    ? `<div class="ev"><p class="ev-h">Integrity — ${integ.checksRun} adversarial checks<span class="spacer"></span><span class="chip" style="border-color:var(--ledger);color:var(--ledger)"><b>clean</b></span></p>
+        <p class="replay">Duplicate billing · retroactive claims · claim bursts · entity splitting · window-edge timing · per-actor outliers — nothing tripped. Findings gate trust, never arithmetic.</p></div>`
+    : `<div class="ev"><p class="ev-h">Integrity — ${integ.checksRun} adversarial checks<span class="spacer"></span><span class="chip" style="border-color:var(--accent);color:var(--accent)"><b>${gi(integ.findings.length)}</b> finding${integ.findings.length === 1 ? "" : "s"}</span></p>
+        <ul class="notes">${integ.findings.map((f) => `<li><b>[${esc(f.severity.toUpperCase())}]</b> ${esc(f.check)}: ${esc(f.detail)}${f.samples.length ? `<br>· samples: ${f.samples.map(esc).join(", ")}` : ""}</li>`).join("")}</ul>
+        <p class="replay">Findings gate trust, never arithmetic — the funnel and verdict are computed exactly as without them; a warn/flag is a dispute trigger for a human.</p></div>`;
   const body = `<div class="wf-body">
       <div class="ev"><p class="ev-h">Funnel<span class="spacer"></span>${gi(dropTotal)} dropped</p>
         <div class="drop">${dropChips}<span class="chip" style="border-color:var(--ledger);color:var(--ledger)"><b>−${gi(est.counterfactualCount)}</b> would have happened anyway</span></div></div>
       <div class="ev"><p class="ev-h">Causal evidence<span class="spacer"></span>${gradeEl(est.grade)}</p>${estBlock}</div>
-      ${corr}${econ}${dispute}${verdictBlock}${covBlock}</div>`;
+      ${corr}${econ}${dispute}${verdictBlock}${integBlock}${covBlock}</div>`;
   return `<div class="wf" open-state="${i === 0 ? "1" : "0"}">${summary}${body}</div>`;
 }
 function renderCandidate(c) {

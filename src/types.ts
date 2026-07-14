@@ -114,9 +114,20 @@ export interface MonthlySummary {
 }
 
 export type CounterfactualDesign =
-  /** Grade A: a reserved slice the agents never touch, assignment recorded per unit. */
-  | { kind: "holdout"; experimentId: string; treatedArm: string; controlArm: string }
-  /** Grade B: staged rollout — additive difference-in-differences per slice over pod × period cells. */
+  /**
+   * Grade A: a reserved slice the agents never touch, assignment recorded per
+   * unit. `stratifyBy` names a categorical field on the entity's outcome
+   * events; when present, a post-stratified counterfactual (control rate per
+   * stratum, weighted by the treated stratum mix) is computed as a robustness
+   * check against arm imbalance. It never replaces the primary estimate.
+   */
+  | { kind: "holdout"; experimentId: string; treatedArm: string; controlArm: string; stratifyBy?: { field: string } }
+  /**
+   * Grade B: staged rollout — additive difference-in-differences per slice
+   * over pod × period cells. `placebo` names an earlier pre-period pair: the
+   * same DiD run pre-pre → pre must estimate ≈ 0 (no rollout happened there).
+   * A placebo failure is disclosed on the statement, never silently absorbed.
+   */
   | {
       kind: "naturalExperiment";
       form: "didStagedRollout";
@@ -124,6 +135,7 @@ export type CounterfactualDesign =
         slice: SliceId;
         experimentId: string;
         arms: { treatedPre: string; controlPre: string; controlPost: string; treatedPost: string };
+        placebo?: { arms: { prePreTreated: string; prePreControl: string }; maxAbsDeltaPts: number };
       }>;
     }
   /** Grade B: a recorded routing change left a slice uncovered — its outcome rate projects the counterfactual. */
@@ -181,6 +193,13 @@ export interface OutcomeContract {
   modelSwitchCompanion?: { incumbentModel: string; altModel: string };
   /** Optional expansion parameters (feeds EXPAND's projected impact). */
   expand?: { adjacentVolume: number; adjacentBaselineCostCents: number };
+  /**
+   * Opt-in multi-actor credit assignment. touch-count-v1 remains the default
+   * split; shapley-coalition-v1 additionally computes exact Shapley values
+   * over observed touching coalitions (credit shares — observational, never
+   * a counterfactual claim).
+   */
+  credit?: { rule: "shapley-coalition-v1"; maxActors?: number };
 }
 
 /* ------------------------------ engine outputs ------------------------------- */
@@ -240,6 +259,40 @@ export interface SliceEstimate {
   cells: Record<string, CellCount>;
 }
 
+/* ------------------------------- robustness ---------------------------------- */
+
+/**
+ * Deterministic falsification checks attached to an estimate. They are
+ * evidence about the estimate's fragility — they never move the integer
+ * ledger, and a failed check is disclosed, not absorbed.
+ */
+export interface RobustnessReport {
+  /**
+   * Break-even sensitivity: the factor the measured counterfactual would have
+   * to be multiplied by for attribution to reach zero. factor null when the
+   * measured counterfactual is zero (no finite factor exists).
+   */
+  breakEven?: { factor: number | null; note: string };
+  /**
+   * DiD pre-period placebo: the same estimator run over a window where the
+   * true effect is zero. deltaPts is the worst |placebo estimate| across
+   * configured slices, in rate points.
+   */
+  placebo?: { deltaPts: number; maxAbsDeltaPts: number; pass: boolean; notes: string[] };
+  /** Grade C: leave-one-out stability across matched baseline months. */
+  leaveOneOut?: { lo: number; hi: number; metric: "attributable" | "baselineCostPerOutcomeCents"; note: string };
+  /** Grade A: post-stratified counterfactual + arm balance, when stratifyBy is configured. */
+  postStratified?: {
+    counterfactual: number;
+    attributable: number;
+    strata: Array<{ stratum: string; treated: CellCount; control: CellCount }>;
+    /** Worst per-stratum gap between treated and control mix shares, in points. */
+    maxShareDivergencePts: number;
+    agreesWithPrimary: boolean;
+    note: string;
+  };
+}
+
 export interface EstimatorResult {
   grade: Grade;
   designKind: "holdout" | "naturalExperiment" | "preAgentBaseline" | "rules";
@@ -248,7 +301,8 @@ export interface EstimatorResult {
   attributable: number;
   /** Exact rational: attributable / verified. */
   incrementality: { num: number; den: number };
-  interval?: { lo: number; hi: number; level: 0.95; method: "wilson-newcombe" };
+  interval?: { lo: number; hi: number; level: 0.95; method: "wilson-newcombe" | "did-wald-additive" };
+  robustness?: RobustnessReport;
   perSlice?: SliceEstimate[];
   /** Declared, from the design — the "evidence attached" doctrine. */
   assumptions: string[];
@@ -305,6 +359,64 @@ export interface VerdictResult {
   replay: ReplayRecord;
 }
 
+/* --------------------------- credit & integrity ------------------------------ */
+
+/**
+ * Exact Shapley values over observed touching coalitions (opt-in via
+ * OutcomeContract.credit). The coalition value is the share of
+ * coalition-touched entities that satisfy the contract — observational credit
+ * shares over recorded touches, never a counterfactual claim. Unobserved
+ * coalitions take the best observed subset's value (monotone closure), which
+ * keeps every marginal contribution non-negative.
+ */
+export interface ShapleyCreditReport {
+  method: "shapley-coalition-v1";
+  perActor: Array<{
+    actorId: string;
+    actorClass: ActorClass;
+    /** Normalized Shapley share (R4, 2dp). */
+    share: number;
+    /** Largest-remainder apportionment of verified outcomes by exact share — sums to verified. */
+    verifiedEquivalent: number;
+  }>;
+  agentShare: number;
+  humanShare: number;
+  /** Observed coalitions: which actor sets touched entities, and how those entities converted. */
+  coalitions: Array<{ actors: string[]; n: number; k: number }>;
+  coverage: { entities: number; observedCoalitions: number; closedCoalitions: number };
+  assumptions: string[];
+}
+
+export type IntegritySeverity = "info" | "warn" | "flag";
+
+/**
+ * A deterministic adversarial check over the claim stream. Findings gate
+ * trust, never arithmetic: the funnel and verdict are computed exactly as
+ * before, and a warn/flag finding is a disclosed dispute trigger.
+ */
+export interface IntegrityFinding {
+  check:
+    | "duplicate-claim-rate"
+    | "retroactive-claims"
+    | "claim-burst"
+    | "entity-splitting"
+    | "window-edge-concentration"
+    | "actor-verify-rate-outlier";
+  severity: IntegritySeverity;
+  /** The measured quantity (count or percent, stated in detail). */
+  observed: number;
+  /** The threshold that was crossed. */
+  threshold: number;
+  detail: string;
+  samples: string[];
+}
+
+export interface IntegrityReport {
+  workflowId: string;
+  checksRun: number;
+  findings: IntegrityFinding[];
+}
+
 export interface CoverageReport {
   workflowId: string;
   runsTotal: number;
@@ -326,10 +438,14 @@ export interface WorkflowStatement {
   costPerVerifiedCents: number;
   modelSplit?: ModelSplitEntry[];
   actorSplit?: { agent: number; human: number; rule: string; agentTouches: number; humanTouches: number };
+  /** Present when the contract opts into shapley-coalition-v1 credit. */
+  actorShapley?: ShapleyCreditReport;
   estimator: EstimatorResult;
   verdict: VerdictResult;
   coverage: CoverageReport;
   dispute?: DisputeBlock;
+  /** Adversarial checks over the claim stream — always run, findings disclosed. */
+  integrity: IntegrityReport;
 }
 
 /**

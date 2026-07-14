@@ -10,6 +10,8 @@ Rules that trip people up:
 - **Rounding goes through the registry** (`src/numeric.ts`, rules R1–R5) exactly once at the stated boundary. R5 ordering matters: derived deltas consume already-rounded operands (the $1.06 fair price rounds before the $0.44 delta).
 - **Grades attach to designs, not formulas.** Estimator changes must keep the funnel invariant (claimed ≥ verified ≥ attributable, enforced via `settleCounterfactual`) and declare assumptions on the result — evidence attached, never implied.
 - **Missing design data may downgrade (the evidence ceiling); integrity violations must throw.** A contaminated holdout fails the statement — it never quietly becomes a more generous estimate.
+- **Robustness and integrity findings are disclosure, never arithmetic.** Break-even factors, placebo results, leave-one-out ranges, post-stratified counterfactuals (`estimator.robustness`) and the six adversarial claim-stream checks (`workflow.integrity`) ride on every statement as evidence; none of them may move the integer ledger or a verdict. A warn/flag integrity finding is a dispute trigger for a human — an automatic adjustment on a heuristic is a fabricated number. Meridian and Northwind are the false-positive guard: zero warn/flag findings, test-enforced.
+- **Credit rules:** `touch-count-v1` is the default actor split; `shapley-coalition-v1` (exact coalition Shapley, ≤12 actors, monotone closure for unobserved coalitions) is opt-in per contract via `credit`. Its output is observational credit shares, never counterfactual attribution — the assumptions block must keep saying so.
 - The compass site consumes a committed copy of `generated/meridian-ledger.json` and re-pins every figure at its build; after changing numbers here, copy the artifact over and update compass's pins deliberately.
 
-Commands: `npm run typecheck` · `npm test` (69 tests) · `npm run reconcile`.
+Commands: `npm run typecheck` · `npm test` (116 tests) · `npm run reconcile`.

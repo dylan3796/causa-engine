@@ -28,6 +28,36 @@ function estimatorLines(e: EstimatorResult, indent = ""): string[] {
       `${indent}- 95% interval on incrementality: ${(100 * e.interval.lo).toFixed(1)}%–${(100 * e.interval.hi).toFixed(1)}% (${e.interval.method})`
     );
   }
+  if (e.robustness) {
+    const r = e.robustness;
+    if (r.breakEven) {
+      lines.push(
+        `${indent}- Robustness · break-even: ${r.breakEven.factor === null ? r.breakEven.note : `×${r.breakEven.factor} — ${r.breakEven.note}`}`
+      );
+    }
+    if (r.placebo) {
+      lines.push(
+        `${indent}- Robustness · placebo: worst |Δ| ${r.placebo.deltaPts}pts (limit ±${r.placebo.maxAbsDeltaPts}pts) — ${r.placebo.pass ? "pass" : "FAIL"}`
+      );
+      for (const n of r.placebo.notes) lines.push(`${indent}  - ${n}`);
+    }
+    if (r.leaveOneOut) {
+      lines.push(
+        `${indent}- Robustness · leave-one-out ${r.leaveOneOut.metric}: [${int(r.leaveOneOut.lo)}, ${int(r.leaveOneOut.hi)}] — ${r.leaveOneOut.note}`
+      );
+    }
+    if (r.postStratified) {
+      const ps = r.postStratified;
+      lines.push(
+        `${indent}- Robustness · post-stratified: counterfactual ${int(ps.counterfactual)} → ${int(ps.attributable)} attributable · max stratum mix divergence ${ps.maxShareDivergencePts}pts — ${ps.note}`
+      );
+      for (const s of ps.strata) {
+        lines.push(
+          `${indent}  - stratum ${s.stratum}: treated ${int(s.treated.k)}/${int(s.treated.n)} · control ${int(s.control.k)}/${int(s.control.n)}`
+        );
+      }
+    }
+  }
   for (const [name, cell] of Object.entries(e.cells)) {
     lines.push(`${indent}- Cell ${name}: ${int(cell.k)} / ${int(cell.n)}`);
   }
@@ -71,6 +101,21 @@ function workflowSection(w: WorkflowStatement): string[] {
       `  - actor split (${w.actorSplit.rule}): agent ${w.actorSplit.agent.toFixed(2)} (${int(w.actorSplit.agentTouches)} touches) / human ${w.actorSplit.human.toFixed(2)} (${int(w.actorSplit.humanTouches)} touches)`
     );
   }
+  if (w.actorShapley) {
+    const sh = w.actorShapley;
+    lines.push(
+      `  - credit (${sh.method}): agent ${sh.agentShare.toFixed(2)} / human ${sh.humanShare.toFixed(2)} · ${int(sh.coverage.entities)} entities in ${int(sh.coverage.observedCoalitions)} observed coalitions`
+    );
+    for (const a of sh.perActor) {
+      lines.push(
+        `    - ${a.actorId} (${a.actorClass}): share ${a.share.toFixed(2)} → ${int(a.verifiedEquivalent)} verified-equivalent`
+      );
+    }
+    for (const c of sh.coalitions) {
+      lines.push(`    - coalition {${c.actors.join(", ")}}: ${int(c.k)}/${int(c.n)} entities satisfy the contract`);
+    }
+    for (const a of sh.assumptions) lines.push(`    - Assumption: ${a}`);
+  }
   lines.push("");
   lines.push(`**Evidence (${w.estimator.designKind}, Grade ${w.estimator.grade}):**`);
   lines.push(...estimatorLines(w.estimator));
@@ -98,6 +143,17 @@ function workflowSection(w: WorkflowStatement): string[] {
   lines.push(
     `**Coverage:** ${int(w.coverage.runsWithKey)}/${int(w.coverage.runsTotal)} runs carry a join key (${w.coverage.runKeyPct}%) · ${int(w.coverage.claimsJoined)}/${int(w.coverage.claimsTotal)} claims joined`
   );
+  if (w.integrity.findings.length === 0) {
+    lines.push(`**Integrity:** ${w.integrity.checksRun} adversarial checks — clean`);
+  } else {
+    lines.push(
+      `**Integrity:** ${w.integrity.checksRun} adversarial checks — ${w.integrity.findings.length} finding${w.integrity.findings.length === 1 ? "" : "s"} (disclosed; findings gate trust, never arithmetic)`
+    );
+    for (const f of w.integrity.findings) {
+      lines.push(`  - [${f.severity.toUpperCase()}] ${f.check}: ${f.detail}`);
+      if (f.samples.length > 0) lines.push(`    - samples: ${f.samples.join(", ")}`);
+    }
+  }
   lines.push("");
   return lines;
 }

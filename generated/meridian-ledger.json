@@ -27,7 +27,7 @@
     "renegotiationDeltaPerResolution": 0.44,
     "reopenedWithin7Days": 61
   },
-  "engineVersion": "0.1.0",
+  "engineVersion": "0.2.0",
   "headers": {
     "adjustmentIdentified": 91.5,
     "attributable": 3163,

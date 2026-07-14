@@ -5,6 +5,7 @@
  * the statement downgrades here and says so.
  */
 import { settleCounterfactual } from "../numeric";
+import { breakEven } from "./robustness";
 import type { ContributionGraph } from "../join/graph";
 import { qualifyingTouches } from "../join/contribution";
 import type { MetricRecord, Predicate } from "../predicates";
@@ -42,12 +43,14 @@ export function estimateRules(
     `Rule-based counterfactual: ${counterfactual} of ${verified} verified outcomes match the would-have-happened-anyway predicate.`,
   ];
   if (gradeCeilingNote) notes.push(gradeCeilingNote);
+  const be = breakEven(verified, counterfactual);
   return {
     grade: "D",
     designKind: "rules",
     counterfactualCount: counterfactual,
     attributable,
     incrementality: { num: attributable, den: verified },
+    robustness: be ? { breakEven: be } : undefined,
     cells: { verified: { n: verified, k: counterfactual } },
     assumptions: [
       "Counterfactual is deterministic rule logic, not an experiment — the evidence-grade floor.",

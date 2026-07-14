@@ -1162,6 +1162,296 @@ var Causa = (() => {
     return report;
   }
 
+  // src/join/shapley.ts
+  var SHAPLEY_MAX_ACTORS_DEFAULT = 12;
+  function computeShapleyCredit(graph, verified, maxActors = SHAPLEY_MAX_ACTORS_DEFAULT) {
+    const classById = /* @__PURE__ */ new Map();
+    const coalitionByEntity = /* @__PURE__ */ new Map();
+    for (const [entKey, touches] of graph.touchesByEntity) {
+      const ids = [...new Set(touches.map((t) => t.actorId))].sort((a, b) => a < b ? -1 : 1);
+      coalitionByEntity.set(entKey, ids);
+      for (const t of touches) classById.set(t.actorId, t.actorClass);
+    }
+    if (coalitionByEntity.size === 0) return void 0;
+    const actorIds = [...classById.keys()].sort((a, b) => a < b ? -1 : 1);
+    const m = actorIds.length;
+    if (m > maxActors) {
+      throw new EngineError(
+        "credit",
+        `shapley-coalition-v1 asked for ${m} actors but the exact-enumeration cap is ${maxActors} \u2014 raise credit.maxActors deliberately or fall back to touch-count-v1`
+      );
+    }
+    const indexById = new Map(actorIds.map((id, i) => [id, i]));
+    const cellByMask = /* @__PURE__ */ new Map();
+    for (const [entKey, ids] of coalitionByEntity) {
+      let mask = 0;
+      for (const id of ids) mask |= 1 << indexById.get(id);
+      let cell = cellByMask.get(mask);
+      if (!cell) cellByMask.set(mask, cell = { n: 0, k: 0 });
+      cell.n += 1;
+      if (entitySatisfiesContract(graph, entKey)) cell.k += 1;
+    }
+    const size = 1 << m;
+    const v = new Float64Array(size);
+    for (let mask = 1; mask < size; mask++) {
+      const observed = cellByMask.get(mask);
+      let best = observed ? observed.k / observed.n : 0;
+      for (let i = 0; i < m; i++) {
+        if (mask & 1 << i) best = Math.max(best, v[mask & ~(1 << i)]);
+      }
+      v[mask] = best;
+    }
+    const factorial = (x) => {
+      let acc = 1;
+      for (let i = 2; i <= x; i++) acc *= i;
+      return acc;
+    };
+    const weight = [];
+    for (let s = 0; s < m; s++) weight[s] = factorial(s) * factorial(m - 1 - s) / factorial(m);
+    const popcount = (x) => {
+      let c = 0;
+      while (x) {
+        x &= x - 1;
+        c += 1;
+      }
+      return c;
+    };
+    const phi = new Array(m).fill(0);
+    for (let mask = 0; mask < size; mask++) {
+      const s = popcount(mask);
+      for (let i = 0; i < m; i++) {
+        if (mask & 1 << i) continue;
+        phi[i] += weight[s] * (v[mask | 1 << i] - v[mask]);
+      }
+    }
+    const total = phi.reduce((a, b) => a + b, 0);
+    const exactShares = phi.map((x) => total > 0 ? x / total : 0);
+    const raw = exactShares.map((s) => s * verified);
+    const floors = raw.map(Math.floor);
+    let remaining = verified - floors.reduce((a, b) => a + b, 0);
+    const order = actorIds.map((id, i) => ({ i, rem: raw[i] - floors[i], id })).sort((a, b) => b.rem - a.rem || (a.id < b.id ? -1 : 1));
+    const equivalents = [...floors];
+    for (const { i } of order) {
+      if (remaining <= 0) break;
+      equivalents[i] += 1;
+      remaining -= 1;
+    }
+    let agentPhi = 0;
+    let humanPhi = 0;
+    for (let i = 0; i < m; i++) {
+      if (classById.get(actorIds[i]) === "agent") agentPhi += phi[i];
+      else humanPhi += phi[i];
+    }
+    const coalitions = [...cellByMask.entries()].map(([mask, cell]) => ({
+      actors: actorIds.filter((_, i) => mask & 1 << i),
+      n: cell.n,
+      k: cell.k
+    })).sort((a, b) => a.actors.join("|") < b.actors.join("|") ? -1 : 1);
+    const share2 = (x) => roundHalfUp(x * 100) / 100;
+    return {
+      method: "shapley-coalition-v1",
+      perActor: actorIds.map((id, i) => ({
+        actorId: id,
+        actorClass: classById.get(id),
+        share: share2(exactShares[i]),
+        verifiedEquivalent: equivalents[i]
+      })),
+      agentShare: total > 0 ? share2(agentPhi / total) : 0,
+      humanShare: total > 0 ? share2(humanPhi / total) : 0,
+      coalitions,
+      coverage: {
+        entities: coalitionByEntity.size,
+        observedCoalitions: cellByMask.size,
+        closedCoalitions: size - 1 - cellByMask.size
+      },
+      assumptions: [
+        "Coalition value = share of coalition-touched entities satisfying the contract (event + quality bar), no claim anchor.",
+        "Unobserved coalitions take the best observed subset's value (monotone closure) \u2014 marginal contributions stay non-negative.",
+        "Observational credit shares over recorded touches, not counterfactual attribution: the coalition mix was not randomized."
+      ]
+    };
+  }
+
+  // src/verify/integrity.ts
+  var INTEGRITY_THRESHOLDS = {
+    /** duplicate-claim-rate: % of claims double-billing a settled entity. */
+    duplicateWarnPct: 2,
+    duplicateFlagPct: 5,
+    /** retroactive-claims: claim stamped ≥ 24h after the outcome it asserts. */
+    retroactiveLagMs: 24 * 36e5,
+    retroactiveWarnPct: 1,
+    retroactiveFlagPct: 5,
+    /** claim-burst: one actor's max daily claims vs their median active day. */
+    burstMinClaims: 30,
+    burstWarnRatio: 5,
+    burstWarnMax: 20,
+    burstFlagRatio: 10,
+    burstFlagMax: 50,
+    /** entity-splitting: distinct claimed ids collapsing under canonicalization. */
+    splitFlagPctOfEntities: 1,
+    /** window-edge-concentration: verified outcomes landing in the window's last 10%. */
+    edgeTailShare: 0.9,
+    edgeWarnPct: 15,
+    edgeFlagPct: 30,
+    /** actor-verify-rate-outlier: per-actor verify rate vs the workflow's. */
+    outlierMinClaims: 20,
+    outlierDeltaPts: 25,
+    /** Small-sample gate: rate checks need at least this many observations. */
+    minSample: 20
+  };
+  function medianLowerMiddle(values) {
+    const sorted = [...values].sort((a, b) => a - b);
+    return sorted[Math.floor((sorted.length - 1) / 2)];
+  }
+  var pct = (num, den) => den > 0 ? 100 * num / den : 0;
+  var round1 = (x) => Math.floor(x * 10 + 0.5) / 10;
+  function runIntegrity(graph, report) {
+    const T = INTEGRITY_THRESHOLDS;
+    const findings = [];
+    const contract = graph.contract;
+    const claims = graph.workflowRuns.filter((r) => r.claim?.workflowId === contract.workflowId);
+    const runsById = new Map(graph.workflowRuns.map((r) => [r.id, r]));
+    const claimed = report.claimed;
+    const verified = report.verified;
+    if (claimed >= T.minSample) {
+      const rate = round1(pct(report.drop.duplicateClaim, claimed));
+      if (rate >= T.duplicateWarnPct) {
+        findings.push({
+          check: "duplicate-claim-rate",
+          severity: rate >= T.duplicateFlagPct ? "flag" : "warn",
+          observed: rate,
+          threshold: rate >= T.duplicateFlagPct ? T.duplicateFlagPct : T.duplicateWarnPct,
+          detail: `${report.drop.duplicateClaim} of ${claimed} claims (${rate}%) re-billed an already-settled entity.`,
+          samples: report.duplicateSamples ?? []
+        });
+      }
+    }
+    if (verified.length >= T.minSample) {
+      let retro = 0;
+      const samples = [];
+      for (const v of verified) {
+        const run = runsById.get(v.claimRunId);
+        const claimedAt = run?.claim ? Date.parse(run.claim.claimedAt) : NaN;
+        if (Number.isFinite(claimedAt) && claimedAt - Date.parse(v.occurredAt) >= T.retroactiveLagMs) {
+          retro += 1;
+          if (samples.length < 5) samples.push(v.entityKey);
+        }
+      }
+      const rate = round1(pct(retro, verified.length));
+      if (rate >= T.retroactiveWarnPct) {
+        findings.push({
+          check: "retroactive-claims",
+          severity: rate >= T.retroactiveFlagPct ? "flag" : "warn",
+          observed: rate,
+          threshold: rate >= T.retroactiveFlagPct ? T.retroactiveFlagPct : T.retroactiveWarnPct,
+          detail: `${retro} of ${verified.length} verified outcomes (${rate}%) were claimed \u2265 24h AFTER the outcome occurred \u2014 claims should precede or accompany the outcome, not chase it.`,
+          samples
+        });
+      }
+    }
+    const byActor = /* @__PURE__ */ new Map();
+    for (const run of claims) {
+      let list = byActor.get(run.actorId);
+      if (!list) byActor.set(run.actorId, list = []);
+      list.push(run);
+    }
+    for (const [actorId, actorClaims] of [...byActor.entries()].sort(([a], [b]) => a < b ? -1 : 1)) {
+      if (actorClaims.length < T.burstMinClaims) continue;
+      const daily = /* @__PURE__ */ new Map();
+      for (const run of actorClaims) {
+        const day = Math.floor(Date.parse(run.claim.claimedAt) / DAY_MS);
+        daily.set(day, (daily.get(day) ?? 0) + 1);
+      }
+      const counts = [...daily.values()];
+      const max = Math.max(...counts);
+      const median = Math.max(1, medianLowerMiddle(counts));
+      const ratio = round1(max / median);
+      const isFlag = ratio >= T.burstFlagRatio && max >= T.burstFlagMax;
+      const isWarn = ratio >= T.burstWarnRatio && max >= T.burstWarnMax;
+      if (isFlag || isWarn) {
+        findings.push({
+          check: "claim-burst",
+          severity: isFlag ? "flag" : "warn",
+          observed: ratio,
+          threshold: isFlag ? T.burstFlagRatio : T.burstWarnRatio,
+          detail: `${actorId}: peak day carried ${max} claims vs a median active day of ${median} (${ratio}\xD7).`,
+          samples: [actorId]
+        });
+      }
+    }
+    const canonicalGroups = /* @__PURE__ */ new Map();
+    for (const run of claims) {
+      for (const entKey of graph.entityKeysByRun.get(run.id) ?? []) {
+        const sep = entKey.indexOf(":");
+        const canonical = `${entKey.slice(0, sep)}:${entKey.slice(sep + 1).toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+        let group = canonicalGroups.get(canonical);
+        if (!group) canonicalGroups.set(canonical, group = /* @__PURE__ */ new Set());
+        group.add(entKey);
+      }
+    }
+    const collisions = [...canonicalGroups.entries()].filter(([, group]) => group.size > 1).sort(([a], [b]) => a < b ? -1 : 1);
+    if (collisions.length > 0) {
+      const extraIds = collisions.reduce((acc, [, g]) => acc + g.size - 1, 0);
+      const ratePct = round1(pct(extraIds, canonicalGroups.size));
+      findings.push({
+        check: "entity-splitting",
+        severity: ratePct >= T.splitFlagPctOfEntities ? "flag" : "warn",
+        observed: collisions.length,
+        threshold: 1,
+        detail: `${collisions.length} canonical entities were claimed under ${collisions.length + extraIds} distinct ids (e.g. case/punctuation variants) \u2014 possible double-billing via entity splitting.`,
+        samples: collisions.slice(0, 5).map(([, group]) => [...group].sort().join(" \u2194 "))
+      });
+    }
+    if (verified.length >= T.minSample) {
+      const windowMs = contract.windowDays * DAY_MS;
+      let tail = 0;
+      const samples = [];
+      for (const v of verified) {
+        const run = runsById.get(v.claimRunId);
+        if (!run) continue;
+        const lag = Date.parse(v.occurredAt) - Date.parse(run.startedAt);
+        if (lag >= T.edgeTailShare * windowMs) {
+          tail += 1;
+          if (samples.length < 5) samples.push(v.entityKey);
+        }
+      }
+      const rate = round1(pct(tail, verified.length));
+      if (rate >= T.edgeWarnPct) {
+        findings.push({
+          check: "window-edge-concentration",
+          severity: rate >= T.edgeFlagPct ? "flag" : "warn",
+          observed: rate,
+          threshold: rate >= T.edgeFlagPct ? T.edgeFlagPct : T.edgeWarnPct,
+          detail: `${tail} of ${verified.length} verified outcomes (${rate}%) landed in the final 10% of the ${contract.windowDays}-day join window \u2014 natural lag distributions decay, they do not pile up at the edge.`,
+          samples
+        });
+      }
+    }
+    if (claimed >= T.minSample) {
+      const overallPct = pct(verified.length, claimed);
+      const verifiedByActor = /* @__PURE__ */ new Map();
+      for (const v of verified) verifiedByActor.set(v.actorId, (verifiedByActor.get(v.actorId) ?? 0) + 1);
+      for (const [actorId, actorClaims] of [...byActor.entries()].sort(([a], [b]) => a < b ? -1 : 1)) {
+        if (actorClaims.length < T.outlierMinClaims) continue;
+        const actorPct = pct(verifiedByActor.get(actorId) ?? 0, actorClaims.length);
+        const deltaPts = round1(Math.abs(actorPct - overallPct));
+        if (deltaPts >= T.outlierDeltaPts) {
+          findings.push({
+            check: "actor-verify-rate-outlier",
+            severity: "info",
+            observed: deltaPts,
+            threshold: T.outlierDeltaPts,
+            detail: `${actorId}: verify rate ${round1(actorPct)}% vs workflow ${round1(overallPct)}% (\u0394 ${deltaPts}pts over ${actorClaims.length} claims).`,
+            samples: [actorId]
+          });
+        }
+      }
+    }
+    const rank = { flag: 0, warn: 1, info: 2 };
+    findings.sort((a, b) => rank[a.severity] - rank[b.severity] || (a.check < b.check ? -1 : 1));
+    return { workflowId: contract.workflowId, checksRun: 6, findings };
+  }
+
   // src/outcomes/identify.ts
   function findNoEventWithinBar(bar) {
     if (!bar) return void 0;
@@ -1196,14 +1486,14 @@ var Causa = (() => {
       if (!lastSeen || hit.occurredAt > lastSeen) lastSeen = hit.occurredAt;
     }
     if (entities.length === 0) return void 0;
-    const pct = Math.round(100 * entities.length / report.verified.length);
+    const pct2 = Math.round(100 * entities.length / report.verified.length);
     return {
       kind: "qualityBarBoundary",
       source: graph.contract.event.source,
       eventType: bar.eventType,
       count: entities.length,
       workflowId: graph.contract.workflowId,
-      pctOfVerified: pct,
+      pctOfVerified: pct2,
       draft: {
         source: graph.contract.event.source,
         eventType: graph.contract.event.eventType,
@@ -1211,7 +1501,7 @@ var Causa = (() => {
         suggestedQualityBar: { kind: "noEventWithin", eventType: bar.eventType, days: widenedDays }
       },
       context: [
-        `${entities.length} verified outcomes (${pct}%) had a ${bar.eventType} land after day ${bar.days} but inside day ${widenedDays} \u2014 just past the quality bar.`,
+        `${entities.length} verified outcomes (${pct2}%) had a ${bar.eventType} land after day ${bar.days} but inside day ${widenedDays} \u2014 just past the quality bar.`,
         `Widening the bar to ${widenedDays} days would count them as failures.`
       ],
       sampleEntities: entities.slice(0, 5),
@@ -1330,6 +1620,25 @@ var Causa = (() => {
     return { lo: Math.max(0, center - half), hi: Math.min(1, center + half) };
   }
 
+  // src/causal/robustness.ts
+  function signedRound(x, dp) {
+    const scale = 10 ** dp;
+    const rounded = roundHalfUp(Math.abs(x) * scale) / scale;
+    return x < 0 ? -rounded : rounded;
+  }
+  function breakEven(verified, counterfactualCount) {
+    if (verified <= 0) return void 0;
+    if (counterfactualCount <= 0) {
+      return {
+        factor: null,
+        note: "Measured counterfactual is zero; attribution erases only if every verified outcome would have happened anyway \u2014 no finite break-even factor."
+      };
+    }
+    const factor = signedRound(verified / counterfactualCount, 2);
+    const note = factor <= 1 ? `Estimate is at or below break-even already (counterfactual ${counterfactualCount} \u2265 verified ${verified} would zero it at factor ${factor}).` : `The measured counterfactual (${counterfactualCount}) would have to be ${factor}\xD7 larger to erase the attributable delta.`;
+    return { factor, note };
+  }
+
   // src/causal/cells.ts
   function armCell(graph, experimentId, arm) {
     const entities = armEntities(graph, experimentId, arm);
@@ -1341,6 +1650,58 @@ var Causa = (() => {
   }
 
   // src/causal/holdout.ts
+  function stratumOf(graph, entKey, field) {
+    for (const ev of graph.eventsByEntity.get(entKey) ?? []) {
+      const value = ev.fields?.[field];
+      if (value !== void 0) return String(value);
+    }
+    return "(unstratified)";
+  }
+  function postStratify(graph, field, treatedEntities, controlEntities, verified, primaryCf) {
+    const strata = /* @__PURE__ */ new Map();
+    const cellFor = (stratum) => {
+      let cell = strata.get(stratum);
+      if (!cell) strata.set(stratum, cell = { treated: { n: 0, k: 0 }, control: { n: 0, k: 0 } });
+      return cell;
+    };
+    for (const entKey of treatedEntities) {
+      const cell = cellFor(stratumOf(graph, entKey, field)).treated;
+      cell.n += 1;
+      if (entitySatisfiesContract(graph, entKey)) cell.k += 1;
+    }
+    for (const entKey of controlEntities) {
+      const cell = cellFor(stratumOf(graph, entKey, field)).control;
+      cell.n += 1;
+      if (entitySatisfiesContract(graph, entKey)) cell.k += 1;
+    }
+    const nT = treatedEntities.size;
+    const nC = controlEntities.size;
+    let cfRaw = 0;
+    let maxShareDivergencePts = 0;
+    const rows = [];
+    for (const [stratum, cell] of [...strata.entries()].sort(([a], [b]) => a < b ? -1 : 1)) {
+      rows.push({ stratum, treated: cell.treated, control: cell.control });
+      if (cell.treated.n > 0 && cell.control.n === 0) {
+        return {
+          skippedNote: `Post-stratification by '${field}' skipped: treated stratum '${stratum}' has no control entities to project from.`
+        };
+      }
+      if (cell.control.n > 0) cfRaw += cell.control.k / cell.control.n * cell.treated.n;
+      const divergencePts = Math.abs(cell.treated.n / nT - cell.control.n / nC) * 100;
+      maxShareDivergencePts = Math.max(maxShareDivergencePts, divergencePts);
+    }
+    const settled = settleCounterfactual(verified, cfRaw);
+    const divergedPts = verified > 0 ? Math.abs(settled.counterfactual - primaryCf) / verified * 100 : 0;
+    const agreesWithPrimary = divergedPts <= 5;
+    return {
+      counterfactual: settled.counterfactual,
+      attributable: settled.attributable,
+      strata: rows,
+      maxShareDivergencePts: signedRound(maxShareDivergencePts, 1),
+      agreesWithPrimary,
+      note: agreesWithPrimary ? `Post-stratified counterfactual ${settled.counterfactual} agrees with the primary ${primaryCf} (gap ${signedRound(divergedPts, 1)}% of verified \u2264 5%): the arms are mix-balanced on '${field}'.` : `Post-stratified counterfactual ${settled.counterfactual} diverges from the primary ${primaryCf} by ${signedRound(divergedPts, 1)}% of verified: the arms are mix-imbalanced on '${field}' \u2014 the adjusted figure is the fragility bound.`
+    };
+  }
   function estimateHoldout(graph, report, design) {
     const treated = armCell(graph, design.experimentId, design.treatedArm);
     const control = armCell(graph, design.experimentId, design.controlArm);
@@ -1361,6 +1722,17 @@ var Causa = (() => {
     const wC = wilson(control.k, control.n);
     const lo = wT.lo > 0 ? clamp(1 - wC.hi / wT.lo, 0, 1) : 0;
     const hi = wT.hi > 0 ? clamp(1 - wC.lo / wT.hi, 0, 1) : 0;
+    const robustness = {};
+    const notes = [
+      `Control quality-passing rate ${control.k}/${control.n} projected onto ${treated.n} treated units \u2192 ${counterfactual} would have happened anyway.`
+    ];
+    const be = breakEven(verified, counterfactual);
+    if (be) robustness.breakEven = be;
+    if (design.stratifyBy) {
+      const ps = postStratify(graph, design.stratifyBy.field, treated.entities, control.entities, verified, counterfactual);
+      if ("skippedNote" in ps) notes.push(ps.skippedNote);
+      else robustness.postStratified = ps;
+    }
     return {
       grade: "A",
       designKind: "holdout",
@@ -1368,6 +1740,7 @@ var Causa = (() => {
       attributable,
       incrementality: { num: attributable, den: verified },
       interval: { lo, hi, level: 0.95, method: "wilson-newcombe" },
+      robustness,
       cells: {
         treated: { n: treated.n, k: verified },
         control: { n: control.n, k: control.k }
@@ -1376,9 +1749,7 @@ var Causa = (() => {
         "Assignment recorded at unit level before the period; the engine reads arms, it does not randomize.",
         "Exclusion verified: no agent-class touch exists on any control-arm entity."
       ],
-      notes: [
-        `Control quality-passing rate ${control.k}/${control.n} projected onto ${treated.n} treated units \u2192 ${counterfactual} would have happened anyway.`
-      ]
+      notes
     };
   }
 
@@ -1396,7 +1767,15 @@ var Causa = (() => {
     }
     const perSlice = [];
     const cells = {};
+    const notes = [];
+    const placeboNotes = [];
     let attributable = 0;
+    let cfLoSum = 0;
+    let cfHiSum = 0;
+    let worstPlaceboPts = 0;
+    let placeboLimitPts = 0;
+    let placeboPass = true;
+    let placeboRan = false;
     for (const sliceDesign of design.slices) {
       const { slice, experimentId, arms } = sliceDesign;
       const preT = armCell(graph, experimentId, arms.treatedPre);
@@ -1414,6 +1793,38 @@ var Causa = (() => {
       const cfRaw = expectedRate * postT.n;
       const settled = settleCounterfactual(verifiedSlice, cfRaw);
       attributable += settled.attributable;
+      const preGapPts = signedRound((preT.k / preT.n - preC.k / preC.n) * 100, 1);
+      notes.push(
+        `${slice}: pre-period treated\u2212control gap ${preGapPts >= 0 ? "+" : ""}${preGapPts}pts is netted out by the DiD (parallel trends carries it forward).`
+      );
+      const cellVar = (cell) => {
+        const p = cell.k / cell.n;
+        return p * (1 - p) / cell.n;
+      };
+      const sdCf = postT.n * Math.sqrt(cellVar(preT) + cellVar(preC) + cellVar(postC));
+      cfLoSum += clamp(cfRaw - Z95 * sdCf, 0, postT.n);
+      cfHiSum += clamp(cfRaw + Z95 * sdCf, 0, postT.n);
+      if (sliceDesign.placebo) {
+        placeboLimitPts = Math.max(placeboLimitPts, sliceDesign.placebo.maxAbsDeltaPts);
+        try {
+          const ppT = armCell(graph, experimentId, sliceDesign.placebo.arms.prePreTreated);
+          const ppC = armCell(graph, experimentId, sliceDesign.placebo.arms.prePreControl);
+          const placeboPts = signedRound(
+            (preT.k / preT.n - ppT.k / ppT.n - (preC.k / preC.n - ppC.k / ppC.n)) * 100,
+            1
+          );
+          const pass = Math.abs(placeboPts) <= sliceDesign.placebo.maxAbsDeltaPts;
+          placeboRan = true;
+          worstPlaceboPts = Math.max(worstPlaceboPts, Math.abs(placeboPts));
+          if (!pass) placeboPass = false;
+          placeboNotes.push(
+            `${slice}: placebo DiD over pre-pre \u2192 pre estimates ${placeboPts >= 0 ? "+" : ""}${placeboPts}pts where truth is 0 (limit \xB1${sliceDesign.placebo.maxAbsDeltaPts}pts) \u2014 ${pass ? "pass" : "FAIL: the design moves when nothing happened; treat the estimate as fragile"}.`
+          );
+        } catch (err) {
+          if (!(err instanceof MissingDesignDataError)) throw err;
+          notes.push(`${slice}: placebo configured but its pre-pre arm data is missing \u2014 placebo not run.`);
+        }
+      }
       perSlice.push({
         slice,
         verified: verifiedSlice,
@@ -1432,22 +1843,45 @@ var Causa = (() => {
       }
     }
     const verified = report.verified.length;
+    const counterfactualCount = verified - attributable;
+    const robustness = {};
+    const be = breakEven(verified, counterfactualCount);
+    if (be) robustness.breakEven = be;
+    if (placeboRan) {
+      robustness.placebo = {
+        deltaPts: signedRound(worstPlaceboPts, 1),
+        maxAbsDeltaPts: placeboLimitPts,
+        pass: placeboPass,
+        notes: placeboNotes
+      };
+    }
     return {
       grade: "B",
       designKind: "naturalExperiment",
-      counterfactualCount: verified - attributable,
+      counterfactualCount,
       attributable,
       incrementality: { num: attributable, den: verified },
+      interval: verified > 0 ? {
+        lo: clamp(1 - cfHiSum / verified, 0, 1),
+        hi: clamp(1 - cfLoSum / verified, 0, 1),
+        level: 0.95,
+        method: "did-wald-additive"
+      } : void 0,
+      robustness,
       perSlice,
       cells,
       assumptions: [
         "Parallel trends: treated and control pods would have moved together absent the rollout.",
         "Rollout timing recorded and independent of outcome propensity.",
-        "Negative slice estimates are clamped to zero attribution; the negative point delta is preserved as evidence."
+        "Negative slice estimates are clamped to zero attribution; the negative point delta is preserved as evidence.",
+        "Interval sums per-slice Wald bands on the expected rate \u2014 conservative (assumes worst-case dependence across slices)."
       ],
-      notes: perSlice.map(
-        (s) => `${s.slice}: ${s.verified} verified vs ${s.counterfactual} expected anyway (point delta ${s.pointDelta >= 0 ? "+" : ""}${s.pointDelta.toFixed(1)}).`
-      )
+      notes: [
+        ...perSlice.map(
+          (s) => `${s.slice}: ${s.verified} verified vs ${s.counterfactual} expected anyway (point delta ${s.pointDelta >= 0 ? "+" : ""}${s.pointDelta.toFixed(1)}).`
+        ),
+        ...notes
+      ]
     };
   }
   function estimateTwoGroupRoutingGap(graph, report, design) {
@@ -1459,6 +1893,9 @@ var Causa = (() => {
     const wC = wilson(control.k, control.n);
     const cfHi = Math.min(verified, Math.round(wC.hi * attempts));
     const cfLo = Math.min(verified, Math.round(wC.lo * attempts));
+    const robustness = {};
+    const be = breakEven(verified, counterfactual);
+    if (be) robustness.breakEven = be;
     return {
       grade: "B",
       designKind: "naturalExperiment",
@@ -1471,6 +1908,7 @@ var Causa = (() => {
         level: 0.95,
         method: "wilson-newcombe"
       },
+      robustness,
       cells: { control: { n: control.n, k: control.k }, treated: { n: attempts, k: verified } },
       assumptions: [
         "The uncovered routing slice's outcome rate is the counterfactual rate for covered attempts.",
@@ -1483,7 +1921,7 @@ var Causa = (() => {
   }
 
   // src/causal/baseline.ts
-  function medianLowerMiddle(values) {
+  function medianLowerMiddle2(values) {
     if (values.length === 0) throw new EngineError("estimate", "median of empty baseline");
     const sorted = [...values].sort((a, b) => a - b);
     return sorted[Math.floor((sorted.length - 1) / 2)];
@@ -1501,7 +1939,7 @@ var Causa = (() => {
         `Only ${matchedCount} baseline months matched volume \xB1${design.match.volumeTolerancePct}%; all ${design.months.length} months used instead.`
       );
     }
-    const baselineCostPerOutcomeCents = medianLowerMiddle(matched.map((m) => m.costPerOutcomeCents));
+    const baselineCostPerOutcomeCents = medianLowerMiddle2(matched.map((m) => m.costPerOutcomeCents));
     const seasonal = design.months.find((m) => m.month === design.seasonality.comparisonMonth);
     if (seasonal) {
       const divergencePct = Math.abs(verified - seasonal.volume) / seasonal.volume * 100;
@@ -1520,16 +1958,54 @@ var Causa = (() => {
         "Displacement basis: outcomes would occur under the pre-agent process at baseline cost; attribution counts work performed, value is cost displacement."
       );
     } else {
-      cfRaw = R1_count(medianLowerMiddle(matched.map((m) => m.volume)));
+      cfRaw = R1_count(medianLowerMiddle2(matched.map((m) => m.volume)));
       assumptions.push("Occurrence basis: matched-median baseline volume would have occurred without the agent.");
     }
     const { counterfactual, attributable } = settleCounterfactual(verified, cfRaw);
+    const robustness = {};
+    const be = breakEven(verified, counterfactual);
+    if (be) robustness.breakEven = be;
+    if (matched.length >= 2) {
+      if (design.basis === "occurrence") {
+        let attrLo = Infinity;
+        let attrHi = -Infinity;
+        for (let drop = 0; drop < matched.length; drop++) {
+          const rest = matched.filter((_, i) => i !== drop);
+          const looCf = R1_count(medianLowerMiddle2(rest.map((m) => m.volume)));
+          const looAttr = settleCounterfactual(verified, looCf).attributable;
+          attrLo = Math.min(attrLo, looAttr);
+          attrHi = Math.max(attrHi, looAttr);
+        }
+        robustness.leaveOneOut = {
+          lo: attrLo,
+          hi: attrHi,
+          metric: "attributable",
+          note: `Dropping any single matched month moves attributable within [${attrLo}, ${attrHi}] \u2014 the estimate does not hinge on one month.`
+        };
+      } else {
+        let costLo = Infinity;
+        let costHi = -Infinity;
+        for (let drop = 0; drop < matched.length; drop++) {
+          const rest = matched.filter((_, i) => i !== drop);
+          const looCost = medianLowerMiddle2(rest.map((m) => m.costPerOutcomeCents));
+          costLo = Math.min(costLo, looCost);
+          costHi = Math.max(costHi, looCost);
+        }
+        robustness.leaveOneOut = {
+          lo: costLo,
+          hi: costHi,
+          metric: "baselineCostPerOutcomeCents",
+          note: `Dropping any single matched month moves the baseline cost/outcome within [${costLo}, ${costHi}] cents.`
+        };
+      }
+    }
     return {
       grade: "C",
       designKind: "preAgentBaseline",
       counterfactualCount: counterfactual,
       attributable,
       incrementality: { num: attributable, den: verified },
+      robustness,
       cells: { matchedMonths: { n: design.months.length, k: matched.length } },
       assumptions,
       notes: [
@@ -1602,12 +2078,14 @@ var Causa = (() => {
       `Rule-based counterfactual: ${counterfactual} of ${verified} verified outcomes match the would-have-happened-anyway predicate.`
     ];
     if (gradeCeilingNote) notes.push(gradeCeilingNote);
+    const be = breakEven(verified, counterfactual);
     return {
       grade: "D",
       designKind: "rules",
       counterfactualCount: counterfactual,
       attributable,
       incrementality: { num: attributable, den: verified },
+      robustness: be ? { breakEven: be } : void 0,
       cells: { verified: { n: verified, k: counterfactual } },
       assumptions: [
         "Counterfactual is deterministic rule logic, not an experiment \u2014 the evidence-grade floor."
@@ -1884,7 +2362,7 @@ var Causa = (() => {
   }
 
   // src/version.ts
-  var ENGINE_VERSION = "0.1.0";
+  var ENGINE_VERSION = "0.2.0";
 
   // src/statement.ts
   function runStatement(inputs, config) {
@@ -1926,10 +2404,12 @@ var Causa = (() => {
         costPerVerifiedCents: economics.costPerVerifiedCents,
         modelSplit: economics.modelSplit,
         actorSplit: actorSplit(graph, report.verified),
+        actorShapley: contract.credit?.rule === "shapley-coalition-v1" ? computeShapleyCredit(graph, verified, contract.credit.maxActors) : void 0,
         estimator: estimatorResult,
         verdict,
         coverage: computeCoverage(graph, report.claimed - report.drop.unjoinable, report.claimed),
-        dispute
+        dispute,
+        integrity: runIntegrity(graph, report)
       });
     }
     const candidates = interpretCandidates(identified, config.boundaryWindowDays);
@@ -1977,6 +2457,36 @@ var Causa = (() => {
         `${indent}- 95% interval on incrementality: ${(100 * e.interval.lo).toFixed(1)}%\u2013${(100 * e.interval.hi).toFixed(1)}% (${e.interval.method})`
       );
     }
+    if (e.robustness) {
+      const r = e.robustness;
+      if (r.breakEven) {
+        lines.push(
+          `${indent}- Robustness \xB7 break-even: ${r.breakEven.factor === null ? r.breakEven.note : `\xD7${r.breakEven.factor} \u2014 ${r.breakEven.note}`}`
+        );
+      }
+      if (r.placebo) {
+        lines.push(
+          `${indent}- Robustness \xB7 placebo: worst |\u0394| ${r.placebo.deltaPts}pts (limit \xB1${r.placebo.maxAbsDeltaPts}pts) \u2014 ${r.placebo.pass ? "pass" : "FAIL"}`
+        );
+        for (const n of r.placebo.notes) lines.push(`${indent}  - ${n}`);
+      }
+      if (r.leaveOneOut) {
+        lines.push(
+          `${indent}- Robustness \xB7 leave-one-out ${r.leaveOneOut.metric}: [${int(r.leaveOneOut.lo)}, ${int(r.leaveOneOut.hi)}] \u2014 ${r.leaveOneOut.note}`
+        );
+      }
+      if (r.postStratified) {
+        const ps = r.postStratified;
+        lines.push(
+          `${indent}- Robustness \xB7 post-stratified: counterfactual ${int(ps.counterfactual)} \u2192 ${int(ps.attributable)} attributable \xB7 max stratum mix divergence ${ps.maxShareDivergencePts}pts \u2014 ${ps.note}`
+        );
+        for (const s of ps.strata) {
+          lines.push(
+            `${indent}  - stratum ${s.stratum}: treated ${int(s.treated.k)}/${int(s.treated.n)} \xB7 control ${int(s.control.k)}/${int(s.control.n)}`
+          );
+        }
+      }
+    }
     for (const [name, cell] of Object.entries(e.cells)) {
       lines.push(`${indent}- Cell ${name}: ${int(cell.k)} / ${int(cell.n)}`);
     }
@@ -2019,6 +2529,21 @@ var Causa = (() => {
         `  - actor split (${w.actorSplit.rule}): agent ${w.actorSplit.agent.toFixed(2)} (${int(w.actorSplit.agentTouches)} touches) / human ${w.actorSplit.human.toFixed(2)} (${int(w.actorSplit.humanTouches)} touches)`
       );
     }
+    if (w.actorShapley) {
+      const sh = w.actorShapley;
+      lines.push(
+        `  - credit (${sh.method}): agent ${sh.agentShare.toFixed(2)} / human ${sh.humanShare.toFixed(2)} \xB7 ${int(sh.coverage.entities)} entities in ${int(sh.coverage.observedCoalitions)} observed coalitions`
+      );
+      for (const a of sh.perActor) {
+        lines.push(
+          `    - ${a.actorId} (${a.actorClass}): share ${a.share.toFixed(2)} \u2192 ${int(a.verifiedEquivalent)} verified-equivalent`
+        );
+      }
+      for (const c of sh.coalitions) {
+        lines.push(`    - coalition {${c.actors.join(", ")}}: ${int(c.k)}/${int(c.n)} entities satisfy the contract`);
+      }
+      for (const a of sh.assumptions) lines.push(`    - Assumption: ${a}`);
+    }
     lines.push("");
     lines.push(`**Evidence (${w.estimator.designKind}, Grade ${w.estimator.grade}):**`);
     lines.push(...estimatorLines(w.estimator));
@@ -2043,6 +2568,17 @@ var Causa = (() => {
     lines.push(
       `**Coverage:** ${int(w.coverage.runsWithKey)}/${int(w.coverage.runsTotal)} runs carry a join key (${w.coverage.runKeyPct}%) \xB7 ${int(w.coverage.claimsJoined)}/${int(w.coverage.claimsTotal)} claims joined`
     );
+    if (w.integrity.findings.length === 0) {
+      lines.push(`**Integrity:** ${w.integrity.checksRun} adversarial checks \u2014 clean`);
+    } else {
+      lines.push(
+        `**Integrity:** ${w.integrity.checksRun} adversarial checks \u2014 ${w.integrity.findings.length} finding${w.integrity.findings.length === 1 ? "" : "s"} (disclosed; findings gate trust, never arithmetic)`
+      );
+      for (const f of w.integrity.findings) {
+        lines.push(`  - [${f.severity.toUpperCase()}] ${f.check}: ${f.detail}`);
+        if (f.samples.length > 0) lines.push(`    - samples: ${f.samples.join(", ")}`);
+      }
+    }
     lines.push("");
     return lines;
   }

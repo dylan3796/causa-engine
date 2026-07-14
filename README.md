@@ -21,9 +21,10 @@ scripts/generate-ledger.ts  codegen: run the pipeline, assert every published
                      figure, write the artifacts
 generated/           meridian-ledger.json (consumed by the compass site) and
                      meridian-statement.md (the human-readable settled statement)
-tests/               69 tests: per-estimator micro-cases, window boundaries,
+tests/               116 tests: per-estimator micro-cases, window boundaries,
                      funnel conservation, byte-determinism, golden acceptance,
-                     source hygiene
+                     robustness (placebo, post-stratification, leave-one-out),
+                     Shapley credit, adversarial integrity, source hygiene
 ```
 
 ## Commands
@@ -64,6 +65,21 @@ statement to be **byte-identical** to the one computed directly from fixtures.
 - **`generated/meridian-statement.md`** — the settled statement, human-readable, regenerated on every reconcile. Every number with the cells it came from, every estimate with its design, assumptions, corroborating baselines, and 95% interval, every verdict with the rule and metric snapshot that produced it, plus the replay fingerprint (input hash · config hash · engine version) that makes the whole statement reproducible. This is the primary evidence surface.
 - **`npm run reconcile`** — fails loudly if any engine-derived figure drifts from the published ledger by a single unit.
 - **`npm test`** — includes the golden acceptance test (the engine must reproduce the published Meridian ledger exactly from event-level records) and the byte-determinism gate (two full pipeline runs must hash identically).
+
+## Robustness, credit, and integrity — surviving hostile review
+
+Three hardening layers ride on every statement. All deterministic, all disclosed as evidence; none of them ever moves the integer ledger.
+
+**Robustness (`estimator.robustness`)** — falsification aids on every estimate:
+
+- **Break-even sensitivity** (all grades): the factor the measured counterfactual would have to be multiplied by to erase the attributable delta — "the control rate would have to be 3.45× what we measured."
+- **Post-stratification** (Grade A, opt-in via `stratifyBy`): per-stratum control rates weighted by the treated stratum mix — the categorical form of regression adjustment — plus the arm-balance table. Mix-imbalanced arms are disclosed, with the adjusted counterfactual as the fragility bound.
+- **Placebo DiD** (Grade B, opt-in via `placebo` arms): the same DiD run over pre-pre → pre, where the true effect is zero. A moving placebo FAILS on the statement. The pre-period gap each slice nets out is always stated (parallel trends is untestable in a 2×2 — nobody has to take it on faith silently). A Wald interval on the summed counterfactual accompanies the estimate.
+- **Leave-one-out** (Grade C): the attributable count (occurrence basis) or the baseline unit cost (displacement basis) recomputed with each matched month dropped — the estimate must not hinge on one month.
+
+**Credit (`workflow.actorShapley`, opt-in via `contract.credit`)** — `shapley-coalition-v1`: exact Shapley values over observed touching coalitions, where a coalition's value is the share of its entities satisfying the contract. Unobserved coalitions take the best observed subset's value (monotone closure). Exact enumeration to 12 actors — never sampled; the cap fails loudly. Output is credit shares plus a largest-remainder apportionment of verified outcomes; the assumptions block says plainly this is observational credit, not counterfactual attribution. `touch-count-v1` remains the default split.
+
+**Integrity (`workflow.integrity`)** — six adversarial checks run on every statement, because the moment money settles on verified counts, the counts become a target: duplicate-claim rate, retroactive claims (claim stamped ≥24h after the outcome it asserts), per-actor claim bursts, entity splitting (distinct ids collapsing under canonicalization), window-edge concentration (outcomes piling up just inside the join window), and per-actor verify-rate outliers. Findings gate **trust, never arithmetic**: the funnel and verdict compute exactly as before, and a warn/flag is a disclosed dispute trigger for a human — an automatic adjustment on a heuristic would be a fabricated number, the thing this engine exists to refuse. The clean fixtures are the false-positive guard: Meridian and Northwind must produce zero warn/flag findings, enforced by test.
 
 ## The statement viewer (`web/`) — a separate deployment
 

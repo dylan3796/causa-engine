@@ -1,7 +1,9 @@
 /**
- * Deterministic credit rules over the contribution graph. No Shapley in v1
- * (doctrine reserves Shapley-via-replay for later); credit is set logic over
- * qualifying touches, declared as an assumption on the output.
+ * Deterministic credit rules over the contribution graph. touch-count-v1 is
+ * the default: set logic over qualifying touches, declared as an assumption
+ * on the output. Contracts can opt into shapley-coalition-v1 (join/shapley.ts)
+ * for exact coalition-based credit; Shapley-via-replay (re-executing runs
+ * against counterfactual coalitions) remains reserved for later.
  */
 import { R4_share2 } from "../numeric";
 import { DAY_MS } from "../time";

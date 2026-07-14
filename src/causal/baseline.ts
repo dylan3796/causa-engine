@@ -10,7 +10,8 @@
  * otherwise exist.
  */
 import { R1_count, settleCounterfactual } from "../numeric";
-import type { EstimatorResult, MonthlySummary, VerificationReport } from "../types";
+import { breakEven } from "./robustness";
+import type { EstimatorResult, MonthlySummary, RobustnessReport, VerificationReport } from "../types";
 import { EngineError } from "../types";
 
 /** Lower-middle median of a sorted copy — deterministic on even counts. */
@@ -69,12 +70,56 @@ export function estimatePreAgentBaseline(
   }
 
   const { counterfactual, attributable } = settleCounterfactual(verified, cfRaw);
+
+  // Robustness: leave-one-out over the matched months. On the occurrence
+  // basis the counterfactual is the matched-median volume, so LOO bounds the
+  // attributable count; on displacement the counterfactual is structurally 0,
+  // so LOO bounds the baseline unit cost that EXPAND and the dispute consume.
+  const robustness: RobustnessReport = {};
+  const be = breakEven(verified, counterfactual);
+  if (be) robustness.breakEven = be;
+  if (matched.length >= 2) {
+    if (design.basis === "occurrence") {
+      let attrLo = Infinity;
+      let attrHi = -Infinity;
+      for (let drop = 0; drop < matched.length; drop++) {
+        const rest = matched.filter((_, i) => i !== drop);
+        const looCf = R1_count(medianLowerMiddle(rest.map((m) => m.volume)));
+        const looAttr = settleCounterfactual(verified, looCf).attributable;
+        attrLo = Math.min(attrLo, looAttr);
+        attrHi = Math.max(attrHi, looAttr);
+      }
+      robustness.leaveOneOut = {
+        lo: attrLo,
+        hi: attrHi,
+        metric: "attributable",
+        note: `Dropping any single matched month moves attributable within [${attrLo}, ${attrHi}] — the estimate does not hinge on one month.`,
+      };
+    } else {
+      let costLo = Infinity;
+      let costHi = -Infinity;
+      for (let drop = 0; drop < matched.length; drop++) {
+        const rest = matched.filter((_, i) => i !== drop);
+        const looCost = medianLowerMiddle(rest.map((m) => m.costPerOutcomeCents));
+        costLo = Math.min(costLo, looCost);
+        costHi = Math.max(costHi, looCost);
+      }
+      robustness.leaveOneOut = {
+        lo: costLo,
+        hi: costHi,
+        metric: "baselineCostPerOutcomeCents",
+        note: `Dropping any single matched month moves the baseline cost/outcome within [${costLo}, ${costHi}] cents.`,
+      };
+    }
+  }
+
   return {
     grade: "C",
     designKind: "preAgentBaseline",
     counterfactualCount: counterfactual,
     attributable,
     incrementality: { num: attributable, den: verified },
+    robustness,
     cells: { matchedMonths: { n: design.months.length, k: matched.length } },
     assumptions,
     notes: [

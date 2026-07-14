@@ -14,8 +14,10 @@
 import type { ExtractRuleSet } from "./extract/extractors";
 import { buildGraph, buildOutcomeIndex } from "./join/graph";
 import { actorSplit } from "./join/contribution";
+import { computeShapleyCredit } from "./join/shapley";
 import { computeCoverage } from "./join/coverage";
 import { verifyClaims } from "./verify/verify";
+import { runIntegrity } from "./verify/integrity";
 import { interpretCandidates, type IdentifiedWorkflow } from "./outcomes/identify";
 import { estimate } from "./causal/estimator";
 import { computeDispute, computeEconomics } from "./economics";
@@ -94,10 +96,15 @@ export function runStatement(inputs: EngineInputs, config: EngineConfig): Ledger
       costPerVerifiedCents: economics.costPerVerifiedCents,
       modelSplit: economics.modelSplit,
       actorSplit: actorSplit(graph, report.verified),
+      actorShapley:
+        contract.credit?.rule === "shapley-coalition-v1"
+          ? computeShapleyCredit(graph, verified, contract.credit.maxActors)
+          : undefined,
       estimator: estimatorResult,
       verdict,
       coverage: computeCoverage(graph, report.claimed - report.drop.unjoinable, report.claimed),
       dispute,
+      integrity: runIntegrity(graph, report),
     });
   }
 
