@@ -25,7 +25,9 @@ export type ImpactFormula =
   | { kind: "renegotiationDelta" }
   | { kind: "rerouteDelta" }
   | { kind: "expandProjection" }
-  | { kind: "repriceDelta"; targetRateCents: number };
+  | { kind: "repriceDelta"; targetRateCents: number }
+  /** The workflow's spend — what the decision governs when no saving has been measured (Tier-0 default policy). */
+  | { kind: "spendAtStake" };
 
 export interface VerdictRule {
   id: string;
@@ -111,6 +113,8 @@ function computeImpact(formula: ImpactFormula, ctx: VerdictContext): number {
         ((dispute.billedPerOutcomeCents - formula.targetRateCents) * report.verified.length) / 100
       );
     }
+    case "spendAtStake":
+      return R3_dollars(economics.spendCents / 100);
   }
 }
 

@@ -3,28 +3,80 @@
  *
  *   causa preflight <engagement.json> [--out <dir>]   what's verifiable, grade ceiling
  *   causa settle    <engagement.json> [--out <dir>]   intake → preflight → statement
+ *   causa interpret <engagement.json> [--out <dir>]   observatory evidence → requests +
+ *                                                     heuristic proposals + review doc
+ *   causa adopt     <engagement.json> <proposals.json> [--out <dir>]
+ *                                                     apply CONFIRMED proposals → a new
+ *                                                     engagement file (input untouched)
  *
- * Outputs land in <out> (default: <engagement dir>/out): intake-report.md,
- * preflight.md, statement.md, statement.json (canonical, replayable).
+ * Outputs land in <out> (default: <engagement dir>/out). The interpret/adopt
+ * loop: run interpret, review interpretation.md, DELETE unconfirmed proposals
+ * from interpretation-proposals.json, run adopt, then settle the adopted file.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { loadEngagement, renderIntakeReport } from "./intake/engagement";
+import { loadEngagement, renderIntakeReport, type EngagementConfig } from "./intake/engagement";
 import { preflight, renderPreflight } from "./intake/preflight";
+import { observe } from "./outcomes/observatory";
+import {
+  applyProposals,
+  buildInterpretationRequests,
+  renderInterpretation,
+  validateProposals,
+  type InterpretationProposal,
+} from "./interpret/protocol";
+import { interpretHeuristically } from "./interpret/heuristic";
 import { runStatement } from "./statement";
 import { renderStatement } from "./report";
 import { canonicalJson } from "./hash";
 
 export function runCli(argv: string[]): number {
   const [command, engagementPath, ...rest] = argv;
-  if (!command || !engagementPath || !["settle", "preflight"].includes(command)) {
-    console.error("usage: causa <settle|preflight> <engagement.json> [--out <dir>]");
+  if (!command || !engagementPath || !["settle", "preflight", "interpret", "adopt"].includes(command)) {
+    console.error("usage: causa <settle|preflight|interpret> <engagement.json> [--out <dir>]");
+    console.error("       causa adopt <engagement.json> <proposals.json> [--out <dir>]");
     return 2;
   }
   const outFlag = rest.indexOf("--out");
   const outDir = resolve(outFlag >= 0 && rest[outFlag + 1] ? rest[outFlag + 1] : join(dirname(resolve(engagementPath)), "out"));
   mkdirSync(outDir, { recursive: true });
+
+  const readEngagementConfig = (): EngagementConfig =>
+    JSON.parse(readFileSync(resolve(engagementPath), "utf8")) as EngagementConfig;
+
+  if (command === "interpret") {
+    const { inputs } = loadEngagement(engagementPath);
+    const engagement = readEngagementConfig();
+    const observatory = observe(inputs);
+    const requests = buildInterpretationRequests(engagement, observatory);
+    const proposals = interpretHeuristically(requests, observatory);
+    validateProposals(proposals, requests);
+    writeFileSync(join(outDir, "interpretation-requests.json"), JSON.stringify(requests, null, 2) + "\n");
+    writeFileSync(join(outDir, "interpretation-proposals.json"), JSON.stringify(proposals, null, 2) + "\n");
+    writeFileSync(join(outDir, "interpretation.md"), renderInterpretation(requests, proposals));
+    console.log(`interpretation: ${requests.length} requests → ${proposals.length} proposals (heuristic-v1) — review ${join(outDir, "interpretation.md")}`);
+    console.log(`to adopt: delete unconfirmed proposals from interpretation-proposals.json, then: causa adopt ${engagementPath} ${join(outDir, "interpretation-proposals.json")}`);
+    return 0;
+  }
+
+  if (command === "adopt") {
+    const positional = rest.filter((a, i) => !a.startsWith("--") && (outFlag < 0 || i !== outFlag + 1));
+    const proposalsPath = positional[0];
+    if (!proposalsPath) {
+      console.error("usage: causa adopt <engagement.json> <proposals.json> [--out <dir>]");
+      return 2;
+    }
+    const engagement = readEngagementConfig();
+    const proposals = JSON.parse(readFileSync(resolve(proposalsPath), "utf8")) as InterpretationProposal[];
+    const adopted = applyProposals(engagement, proposals);
+    // Next to the source engagement, so its relative file references still resolve.
+    const adoptedPath = resolve(engagementPath).replace(/\.json$/, "") + ".adopted.json";
+    writeFileSync(adoptedPath, JSON.stringify(adopted.engagement, null, 2) + "\n");
+    for (const note of adopted.notes) console.log(`adopt: ${note}`);
+    console.log(`adopted engagement → ${adoptedPath} (settle it: causa settle ${adoptedPath})`);
+    return 0;
+  }
 
   const { inputs, config, report } = loadEngagement(engagementPath);
   writeFileSync(join(outDir, "intake-report.md"), renderIntakeReport(report));

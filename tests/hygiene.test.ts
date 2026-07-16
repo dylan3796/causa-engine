@@ -22,6 +22,11 @@ const BANNED: Array<[string, RegExp]> = [
   ["Date.now", /Date\.now\s*\(/],
   ["argless new Date()", /new Date\(\s*\)/],
   ["toLocaleString", /\.toLocaleString\s*\(/],
+  // The sealed core makes no network calls — LLM adapters live OUTSIDE src/
+  // (scripts/), face the same proposal validation, and never touch verdicts.
+  ["fetch()", /\bfetch\s*\(/],
+  ["XMLHttpRequest", /XMLHttpRequest/],
+  ["node:http(s) import", /from ["']node:https?["']/],
 ];
 
 describe("engine hygiene", () => {

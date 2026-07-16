@@ -3,11 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Causa attribution core — the deterministic engine that settles agent outcomes: join, causal ladder, verdicts",
+  "description": "Causa attribution core \u2014 the deterministic engine that settles agent outcomes: join, causal ladder, verdicts",
   "scripts": {
     "reconcile": "tsx scripts/generate-ledger.ts",
     "settle": "tsx src/cli.ts settle",
     "preflight": "tsx src/cli.ts preflight",
+    "interpret": "tsx src/cli.ts interpret",
+    "adopt": "tsx src/cli.ts adopt",
+    "interpret:claude": "tsx scripts/interpret-claude.ts",
     "example": "tsx scripts/export-meridian-example.ts && tsx src/cli.ts settle examples/meridian/engagement.json",
     "build:viewer": "tsx scripts/build-viewer.ts",
     "build:playground": "tsx scripts/build-playground.ts",
@@ -16,6 +19,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.111.0",
     "@types/node": "^20.17.9",
     "esbuild": "^0.28.1",
     "tsx": "^4.23.0",

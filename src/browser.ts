@@ -7,6 +7,14 @@ export type { EngagementConfig, ActivitySourceSpec, OutcomeSourceSpec, LoadedEng
 export { autoEngagement, detectFile, detectFormat } from "./intake/autodetect";
 export { preflight, renderPreflight } from "./intake/preflight";
 export { observe } from "./outcomes/observatory";
+// Interpretation: requests from evidence → validated proposals → adopted config.
+export {
+  applyProposals,
+  buildInterpretationRequests,
+  renderInterpretation,
+  validateProposals,
+} from "./interpret/protocol";
+export { interpretHeuristically } from "./interpret/heuristic";
 export {
   projectScale,
   projectObservedScale,

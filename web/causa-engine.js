@@ -22,10 +22,13 @@ var Causa = (() => {
   var browser_exports = {};
   __export(browser_exports, {
     ENGINE_VERSION: () => ENGINE_VERSION,
+    applyProposals: () => applyProposals,
     autoEngagement: () => autoEngagement,
     buildEngagement: () => buildEngagement,
+    buildInterpretationRequests: () => buildInterpretationRequests,
     detectFile: () => detectFile,
     detectFormat: () => detectFormat,
+    interpretHeuristically: () => interpretHeuristically,
     mixOptions: () => mixOptions,
     northwindFiles: () => northwindFiles,
     observe: () => observe,
@@ -36,10 +39,12 @@ var Causa = (() => {
     projectObservedScale: () => projectObservedScale,
     projectScale: () => projectScale,
     renderIntakeReport: () => renderIntakeReport,
+    renderInterpretation: () => renderInterpretation,
     renderPreflight: () => renderPreflight,
     renderStatement: () => renderStatement,
     runStatement: () => runStatement,
-    substitutionTable: () => substitutionTable
+    substitutionTable: () => substitutionTable,
+    validateProposals: () => validateProposals
   });
 
   // src/types.ts
@@ -921,6 +926,292 @@ var Causa = (() => {
     }
     agents.sort((a, b) => b.spendCents - a.spendCents || (a.actorId < b.actorId ? -1 : 1));
     return { windowDays, joinKeys, agents, drafts, notes };
+  }
+
+  // src/interpret/protocol.ts
+  function validateProposals(proposals, requests) {
+    const requestIds = requests ? new Set(requests.map((r) => r.id)) : void 0;
+    for (const [i, p] of proposals.entries()) {
+      const at = `proposal ${i} (${p.requestId})`;
+      if (!p.interpreter?.name) throw new EngineError("interpret", `${at}: interpreter provenance is required`);
+      if (!["high", "medium", "low"].includes(p.confidence)) {
+        throw new EngineError("interpret", `${at}: confidence must be declared (high|medium|low)`);
+      }
+      if (!Array.isArray(p.rationale) || p.rationale.length === 0) {
+        throw new EngineError("interpret", `${at}: a proposal without rationale is not reviewable`);
+      }
+      if (requestIds && !requestIds.has(p.requestId)) {
+        throw new EngineError("interpret", `${at}: references no known request`);
+      }
+      if (p.payload.kind === "contract") {
+        const c = p.payload.contract;
+        if (!c.id.startsWith("interpreted-")) {
+          throw new EngineError("interpret", `${at}: interpreted contract ids must carry the "interpreted-" prefix \u2014 provenance stays visible`);
+        }
+        if (c.counterfactual.kind !== "rules") {
+          throw new EngineError(
+            "interpret",
+            `${at}: interpretation enters at the evidence floor (Grade D rules). Counterfactual designs are confirmed by humans from recorded data, never proposed by an interpreter.`
+          );
+        }
+        if (c.billing.kind !== "usage") {
+          throw new EngineError("interpret", `${at}: pricing is a settlement term between humans \u2014 interpreted contracts bill as "usage"`);
+        }
+        if (c.corroboration !== void 0 || c.modelSwitchCompanion !== void 0 || c.expand !== void 0) {
+          throw new EngineError("interpret", `${at}: declared aggregates and companion designs come from the customer, not the interpreter`);
+        }
+        if (c.actorIds.length === 0 || !c.actorIds.includes(c.workflowId)) {
+          throw new EngineError("interpret", `${at}: an interpreted contract's workflowId must be one of its actorIds \u2014 that is what routes the derived claims`);
+        }
+        if (!p.payload.joinField) throw new EngineError("interpret", `${at}: a contract proposal must name its join field`);
+      } else if (p.payload.kind === "actors") {
+        if (p.payload.actors.length === 0) throw new EngineError("interpret", `${at}: empty actor roster`);
+      } else {
+        const never = p.payload;
+        throw new EngineError("interpret", `${at}: unknown payload ${JSON.stringify(never)} \u2014 interpretation may only propose mappings, rosters, and draft contracts`);
+      }
+    }
+  }
+  var TIER0_DEFAULT_VERDICT_RULES = [
+    {
+      id: "tier0-retire-nothing-verified",
+      verdict: "RETIRE",
+      priority: 1,
+      when: { op: "cmp", metric: "qualityPassPct", cmp: "eq", value: 0 },
+      impact: { kind: "spendAtStake" }
+    },
+    {
+      id: "tier0-renegotiate-on-floor-evidence",
+      verdict: "RENEGOTIATE",
+      priority: 99,
+      when: { op: "exists", metric: "qualityPassPct" },
+      impact: { kind: "spendAtStake" }
+    }
+  ];
+  var INTERPRETED_RULESET_ID = "interpreted-keys";
+  var prettyLabel = (token) => {
+    const words = token.replace(/[_-]+/g, " ").trim();
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  };
+  function applyProposals(engagement, proposals) {
+    validateProposals(proposals);
+    const notes = [];
+    const actors = [...engagement.actors];
+    const actorIds = new Set(actors.map((a) => a.id));
+    const contracts = [...engagement.contracts];
+    const workflowIds = new Set(contracts.map((c) => c.workflowId));
+    const extractRuleSets = engagement.extractRuleSets.map((rs) => ({ ...rs, rules: [...rs.rules] }));
+    const activitySources = engagement.activitySources.map((s) => ({ ...s, map: { ...s.map } }));
+    const activitySourceLabels = { ...engagement.activitySourceLabels };
+    let adoptedContracts = 0;
+    for (const p of proposals) {
+      if (p.payload.kind === "actors") {
+        for (const actor of p.payload.actors) {
+          if (actorIds.has(actor.id)) continue;
+          actorIds.add(actor.id);
+          actors.push(actor);
+        }
+        notes.push(`Adopted actor roster (${p.payload.actors.length} actors) from ${p.interpreter.name}.`);
+        continue;
+      }
+      const { contract, joinField } = p.payload;
+      if (workflowIds.has(contract.workflowId)) {
+        throw new EngineError("interpret", `adopt: workflow ${contract.workflowId} already has a contract \u2014 interpretation never overwrites confirmed definitions`);
+      }
+      workflowIds.add(contract.workflowId);
+      adoptedContracts += 1;
+      let ruleSet = extractRuleSets.find((rs) => rs.id === INTERPRETED_RULESET_ID);
+      if (!ruleSet) {
+        ruleSet = { id: INTERPRETED_RULESET_ID, rules: [] };
+        extractRuleSets.push(ruleSet);
+      }
+      const rule = { from: "field", field: joinField, entityKind: contract.join.entityKind };
+      if (!ruleSet.rules.some((r) => JSON.stringify(r) === JSON.stringify(rule))) ruleSet.rules.push(rule);
+      contracts.push({ ...contract, join: { ...contract.join, extractorRuleSetId: INTERPRETED_RULESET_ID } });
+      notes.push(
+        `Adopted contract ${contract.id} (${p.confidence} confidence, ${p.interpreter.name}): ${contract.event.eventType} in ${contract.event.source}, joined on ${contract.join.entityKind} via "${joinField}" \u2014 Grade D floor until a counterfactual design is confirmed.`
+      );
+    }
+    if (adoptedContracts > 0) {
+      for (const spec of activitySources) {
+        if (spec.map.claim) continue;
+        spec.map.claim = { workflowId: spec.map.actorId, claimedEventType: { const: "outcome" } };
+        notes.push(
+          `Claim mapping derived on ${spec.file}: every run claims its workflow's outcome (workflowId \u2190 ${typeof spec.map.actorId === "string" ? `column "${spec.map.actorId}"` : JSON.stringify(spec.map.actorId)}); verification does the filtering.`
+        );
+      }
+    }
+    for (const spec of activitySources) {
+      if (typeof spec.source === "object" && "const" in spec.source) {
+        const s = spec.source.const;
+        if (!activitySourceLabels[s]) activitySourceLabels[s] = prettyLabel(s);
+      }
+    }
+    const verdictRules = engagement.verdictRules.length > 0 ? engagement.verdictRules : TIER0_DEFAULT_VERDICT_RULES;
+    if (engagement.verdictRules.length === 0) {
+      notes.push(
+        "No verdict policy defined \u2014 adopted the Tier-0 defaults (RETIRE when nothing verifies, otherwise RENEGOTIATE on the evidence; impact = spend at stake). Replace with contract-specific rules deliberately."
+      );
+    }
+    return {
+      engagement: {
+        ...engagement,
+        actors,
+        contracts,
+        extractRuleSets,
+        activitySources,
+        activitySourceLabels,
+        verdictRules
+      },
+      notes
+    };
+  }
+  var slug2 = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  var usd = (cents) => `$${(cents / 100).toFixed(2)}`;
+  function buildInterpretationRequests(engagement, observatory) {
+    const requests = [];
+    if (engagement.actors.length === 0 && observatory.agents.length > 0) {
+      requests.push({
+        id: "req-actor-roster",
+        kind: "actorRoster",
+        question: "These actor ids appear in the activity exports with no declared roster. Which are agents (and which, if any, are humans)?",
+        context: observatory.agents.map(
+          (a) => `${a.actorId}: ${a.runs} runs \xB7 ${usd(a.spendCents)} spend \xB7 models [${a.models.join(", ")}] \xB7 ${a.joinPct}% of runs join an outcome entity`
+        ),
+        samples: []
+      });
+    }
+    for (const agent of observatory.agents) {
+      if (agent.outputs.length === 0) continue;
+      const top = [...agent.outputs].sort((a, b) => b.count - a.count || (a.eventType < b.eventType ? -1 : 1))[0];
+      if (top.count < 10) continue;
+      const joinKey = observatory.joinKeys.filter((jk) => jk.entityKind === top.entityKind).sort((a, b) => b.matchPct - a.matchPct || (a.field < b.field ? -1 : 1))[0];
+      if (!joinKey) continue;
+      const coTypes = agent.outputs.filter((o) => o.entityKind === top.entityKind && o.eventType !== top.eventType).map((o) => `${o.eventType} (${o.count})`);
+      requests.push({
+        id: `req-outcome-${slug2(agent.actorId)}`,
+        kind: "outcomeDefinition",
+        question: `${agent.actorId}'s runs join ${top.count} "${top.eventType}" events in ${top.source} on ${top.entityKind} entities. Adopt this as the agent's outcome definition? Do any co-occurring event types negate the outcome (a quality bar)?`,
+        context: [
+          `join key: run field "${joinKey.field}" matches ${top.entityKind} ids (${joinKey.matchPct}% of ${joinKey.runsWithField} runs carrying it, ${joinKey.distinctEntities} distinct entities)`,
+          `observed cost per touched outcome: ${usd(top.costPerOutcomeCents)} (${agent.runs} runs, ${usd(agent.spendCents)} spend)`,
+          coTypes.length > 0 ? `co-occurring event types on ${top.entityKind}: ${coTypes.join(", ")}` : `no co-occurring event types observed on ${top.entityKind}`,
+          "Observed association, not attribution \u2014 an adopted contract starts at the Grade-D evidence floor."
+        ],
+        samples: joinKey.samples,
+        subject: { actorId: agent.actorId, source: top.source, eventType: top.eventType, entityKind: top.entityKind }
+      });
+    }
+    return requests;
+  }
+  function renderInterpretation(requests, proposals) {
+    const lines = [];
+    lines.push("# Interpretation \u2014 proposed definitions awaiting confirmation");
+    lines.push("");
+    lines.push(
+      "Interpretation proposes; it never settles. Review each proposal, DELETE the ones you do not confirm from the proposals file, then run `causa adopt` \u2014 the remainder become the engagement's contracts, at the Grade-D evidence floor, billed as usage until priced by humans."
+    );
+    lines.push("");
+    for (const req of requests) {
+      lines.push(`## ${req.id} \u2014 ${req.kind}`);
+      lines.push("");
+      lines.push(req.question);
+      lines.push("");
+      for (const c of req.context) lines.push(`- ${c}`);
+      if (req.samples.length > 0) lines.push(`- samples: ${req.samples.join(" \xB7 ")}`);
+      lines.push("");
+      const answers = proposals.filter((p) => p.requestId === req.id);
+      if (answers.length === 0) lines.push("_No proposal \u2014 the interpreter declined to answer._");
+      for (const p of answers) {
+        const head = `**Proposal** (${p.interpreter.name}${p.interpreter.model ? ` \xB7 ${p.interpreter.model}` : ""}, confidence ${p.confidence})`;
+        if (p.payload.kind === "actors") {
+          lines.push(`${head}: roster of ${p.payload.actors.length} \u2014 ${p.payload.actors.map((a) => `${a.id} (${a.class})`).join(", ")}`);
+        } else {
+          const c = p.payload.contract;
+          lines.push(
+            `${head}: contract \`${c.id}\` \u2014 event \`${c.event.eventType}\` in ${c.event.source}, joined on \`${c.join.entityKind}\` via run field \`${p.payload.joinField}\`, quality bar ${c.qualityBar ? JSON.stringify(c.qualityBar) : "none"}, window ${c.windowDays}d, billing usage, counterfactual Grade-D rules floor`
+          );
+        }
+        for (const r of p.rationale) lines.push(`  - ${r}`);
+        lines.push("");
+      }
+    }
+    return lines.join("\n");
+  }
+
+  // src/interpret/heuristic.ts
+  var HEURISTIC_INTERPRETER = { name: "heuristic-v1" };
+  var NEGATION_LEXICON = [
+    "reopened",
+    "reopen",
+    "returned",
+    "refunded",
+    "refund",
+    "churned",
+    "bounced",
+    "rejected",
+    "reverted",
+    "canceled",
+    "cancelled",
+    "disputed",
+    "chargeback",
+    "escalated"
+  ];
+  var slugId = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  function interpretHeuristically(requests, observatory) {
+    const proposals = [];
+    for (const req of requests) {
+      if (req.kind === "actorRoster") {
+        const actors = observatory.agents.map((a) => ({
+          id: a.actorId,
+          class: "agent",
+          name: a.actorId
+        }));
+        proposals.push({
+          requestId: req.id,
+          interpreter: HEURISTIC_INTERPRETER,
+          confidence: "medium",
+          rationale: [
+            "Every id that produced activity runs is rostered as an agent \u2014 humans cannot be inferred from activity exports and must be added manually."
+          ],
+          payload: { kind: "actors", actors }
+        });
+        continue;
+      }
+      if (req.kind !== "outcomeDefinition" || !req.subject) continue;
+      const { actorId, source, eventType, entityKind } = req.subject;
+      const agent = observatory.agents.find((a) => a.actorId === actorId);
+      if (!agent) continue;
+      const joinKey = observatory.joinKeys.filter((jk) => jk.entityKind === entityKind).sort((a, b) => b.matchPct - a.matchPct || (a.field < b.field ? -1 : 1))[0];
+      if (!joinKey) continue;
+      const negation = agent.outputs.filter(
+        (o) => o.entityKind === entityKind && o.eventType !== eventType && NEGATION_LEXICON.some((n) => o.eventType.toLowerCase().includes(n))
+      ).sort((a, b) => b.count - a.count || (a.eventType < b.eventType ? -1 : 1))[0];
+      const contract = {
+        id: `interpreted-${slugId(actorId)}-${slugId(eventType)}`,
+        workflowId: actorId,
+        event: { source, eventType },
+        qualityBar: negation ? { kind: "noEventWithin", eventType: negation.eventType, days: 7 } : null,
+        counterfactual: { kind: "rules", wouldHaveHappenedAnyway: { op: "or", of: [] } },
+        join: { entityKind, extractorRuleSetId: INTERPRETED_RULESET_ID },
+        billing: { kind: "usage" },
+        windowDays: observatory.windowDays,
+        actorIds: [actorId],
+        declaredEventTypes: [eventType, ...negation ? [negation.eventType] : []]
+      };
+      proposals.push({
+        requestId: req.id,
+        interpreter: HEURISTIC_INTERPRETER,
+        confidence: negation ? "medium" : "high",
+        rationale: [
+          `Highest-volume joined output for ${actorId}: ${eventType} in ${source} on ${entityKind} (join field "${joinKey.field}", ${joinKey.matchPct}% match).`,
+          negation ? `Quality bar proposed: "${negation.eventType}" (${negation.count} observed on the same entities) reads as negating the outcome within 7 days \u2014 confirm the window with the customer.` : `No co-occurring event type on ${entityKind} matches the negation lexicon \u2014 no quality bar proposed; define one with the customer if outcomes can regress.`,
+          "Counterfactual: Grade-D rules floor (nothing assumed away). Billing: usage until priced by humans."
+        ],
+        payload: { kind: "contract", contract, joinField: joinKey.field }
+      });
+    }
+    return proposals;
   }
 
   // src/levers.ts
@@ -2307,6 +2598,8 @@ var Causa = (() => {
           (dispute.billedPerOutcomeCents - formula.targetRateCents) * report.verified.length / 100
         );
       }
+      case "spendAtStake":
+        return R3_dollars(economics.spendCents / 100);
     }
   }
   function decideVerdict(rules, ctx, replay) {
@@ -2440,7 +2733,7 @@ var Causa = (() => {
 
   // src/report.ts
   var int = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  var usd = (cents) => {
+  var usd2 = (cents) => {
     const dollars = Math.floor(cents / 100);
     const rem = Math.abs(cents % 100);
     return `$${int(dollars)}.${String(rem).padStart(2, "0")}`;
@@ -2515,12 +2808,12 @@ var Causa = (() => {
       lines.push(`  - quality failure ${reason}: ${int(count)}`);
     }
     lines.push(
-      `**Economics:** ${usd(w.spendCents)} spend \xB7 ${usd(w.costPerVerifiedCents)}/verified \xB7 quality pass ${w.qualityPassPct}%`
+      `**Economics:** ${usd2(w.spendCents)} spend \xB7 ${usd2(w.costPerVerifiedCents)}/verified \xB7 quality pass ${w.qualityPassPct}%`
     );
     if (w.modelSplit) {
       for (const m of w.modelSplit) {
         lines.push(
-          `  - ${m.model}: ${int(m.verified)} verified (share ${m.share.toFixed(2)}) \xB7 marginal ${usd(m.marginalCostPerVerifiedCents)}/verified`
+          `  - ${m.model}: ${int(m.verified)} verified (share ${m.share.toFixed(2)}) \xB7 marginal ${usd2(m.marginalCostPerVerifiedCents)}/verified`
         );
       }
     }
@@ -2556,7 +2849,7 @@ var Causa = (() => {
     if (w.dispute) {
       lines.push("");
       lines.push(
-        `**Dispute:** billed ${usd(w.dispute.billedPerOutcomeCents)}/outcome \xB7 fair price ${usd(w.dispute.fairPriceCents)} at ${w.dispute.incrementalityPct}% incrementality \xB7 delta ${usd(w.dispute.deltaPerOutcomeCents)} \xB7 ${int(w.dispute.qualityFailures)} quality failures \u2192 ${usd(w.dispute.adjustmentCents)} adjustment`
+        `**Dispute:** billed ${usd2(w.dispute.billedPerOutcomeCents)}/outcome \xB7 fair price ${usd2(w.dispute.fairPriceCents)} at ${w.dispute.incrementalityPct}% incrementality \xB7 delta ${usd2(w.dispute.deltaPerOutcomeCents)} \xB7 ${int(w.dispute.qualityFailures)} quality failures \u2192 ${usd2(w.dispute.adjustmentCents)} adjustment`
       );
     }
     lines.push("");
@@ -2602,7 +2895,7 @@ var Causa = (() => {
     lines.push(`# Settled statement`);
     lines.push("");
     lines.push(
-      `**${int(s.headers.claimed)} claimed \u2192 ${int(s.headers.verified)} verified \u2192 ${int(s.headers.attributable)} attributable** \xB7 spend ${usd(s.headers.spendCents)} \xB7 adjustment identified ${usd(s.headers.adjustmentCents)} \xB7 projected verdict impact ${usd0(s.headers.projectedVerdictImpactDollars)}/mo`
+      `**${int(s.headers.claimed)} claimed \u2192 ${int(s.headers.verified)} verified \u2192 ${int(s.headers.attributable)} attributable** \xB7 spend ${usd2(s.headers.spendCents)} \xB7 adjustment identified ${usd2(s.headers.adjustmentCents)} \xB7 projected verdict impact ${usd0(s.headers.projectedVerdictImpactDollars)}/mo`
     );
     lines.push("");
     lines.push(

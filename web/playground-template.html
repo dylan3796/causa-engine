@@ -194,8 +194,16 @@
       <span><select id="agentPick" aria-label="Choose an agent"></select></span></div>
     <div class="levers" id="levers"></div>
 
-    <div class="step"><span>5 · Proposed contracts — the path onto the settled ledger</span></div>
+    <div class="step"><span>5 · Interpretation — proposed definitions awaiting confirmation</span></div>
     <div class="drafts" id="drafts"></div>
+    <div id="adoptWrap" class="hidden" style="margin-top:12px">
+      <button id="adoptBtn" type="button" class="btn">Adopt all proposals → settle on the ledger</button>
+      <p style="color:var(--text-dim);font-size:12px;margin:8px 0 0">
+        Interpretation proposes; it never settles. Adoption enters at the Grade-D evidence floor, bills as usage until priced by humans,
+        and every run of a contracted agent claims its outcome — verification does the filtering. In a real engagement you delete
+        the proposals you don't confirm first (<code>causa interpret</code> → review → <code>causa adopt</code>).
+      </p>
+    </div>
   </div>
 
   <div id="settledWrap" class="hidden">
@@ -219,6 +227,8 @@ const usdC = (c) => "$" + (c / 100).toLocaleString("en-US", { minimumFractionDig
 
 let pending = []; // {name, content, kind?}
 let lastReport = null;
+let lastAuto = null; // {engagement, detections, contents} — for interpretation adopt
+let lastProposals = null;
 
 /* ---------- file intake UI ---------- */
 function refreshFileList() {
@@ -265,6 +275,7 @@ function runTriangulation(files) {
   const loaded = Causa.buildEngagement(auto.engagement, (f) => auto.contents[f]);
   const report = Causa.observe(loaded.inputs);
   lastReport = report;
+  lastAuto = auto;
 
   const t = loaded.report.totals;
   const rejectBits = t.rejected > 0 ? ` · <span class="warn"><b>${gi(t.rejected)}</b> rejected (reasons per file above)</span>` : " · 0 rejected";
@@ -306,19 +317,61 @@ function runTriangulation(files) {
   pick.onchange = () => renderObservedLevers(report, pick.value);
   renderObservedLevers(report, report.agents[0]?.actorId);
 
-  // drafts
-  $("drafts").innerHTML = report.drafts.length
-    ? report.drafts
-        .map(
-          (d) => `<div class="draft"><b>${esc(d.actorId)}</b> → contract on <b>${esc(d.draft.eventType)}</b> in <b>${esc(d.draft.source)}</b>, joined on <b>${esc(d.draft.entityKind)}</b> · observed volume ${gi(d.volume)}<div class="d-note">Confirm the event, set a quality bar, choose a baseline design (holdout / natural experiment / pre-agent history) — then this stream settles with a grade instead of an observation.</div></div>`
-        )
+  // interpretation — the same requests → proposals → validate pipeline the CLI runs
+  const requests = Causa.buildInterpretationRequests(auto.engagement, report);
+  const proposals = Causa.interpretHeuristically(requests, report);
+  try {
+    Causa.validateProposals(proposals, requests);
+    lastProposals = proposals;
+  } catch (e) {
+    lastProposals = null;
+  }
+  $("drafts").innerHTML = proposals.length
+    ? proposals
+        .map((p) => {
+          if (p.payload.kind === "actors") {
+            return `<div class="draft"><b>Actor roster</b> (${esc(p.interpreter.name)}, confidence ${esc(p.confidence)}): ${p.payload.actors.map((a) => `${esc(a.id)} (${esc(a.class)})`).join(", ")}<div class="d-note">${p.rationale.map(esc).join(" ")}</div></div>`;
+          }
+          const c = p.payload.contract;
+          return `<div class="draft"><b>${esc(c.workflowId)}</b> → contract <code>${esc(c.id)}</code>: <b>${esc(c.event.eventType)}</b> in <b>${esc(c.event.source)}</b>, joined on <b>${esc(c.join.entityKind)}</b> via <code>${esc(p.payload.joinField)}</code> · quality bar ${c.qualityBar ? `<b>no ${esc(c.qualityBar.eventType)} within ${c.qualityBar.days}d</b>` : "none proposed"} · confidence ${esc(p.confidence)}<div class="d-note">${p.rationale.map(esc).join(" ")}</div></div>`;
+        })
         .join("")
-    : `<div class="empty">Nothing to propose yet.</div>`;
+    : `<div class="empty">Nothing to propose yet — no agent output joined an outcome stream.</div>`;
+  $("adoptWrap").classList.toggle("hidden", !lastProposals || !lastProposals.some((p) => p.payload.kind === "contract"));
 
   $("results").classList.remove("hidden");
   $("settledWrap").classList.add("hidden");
   $("results").scrollIntoView({ behavior: "smooth", block: "start" });
 }
+
+/* ---------- adopt & settle ---------- */
+$("adoptBtn").addEventListener("click", () => {
+  if (!lastAuto || !lastProposals) return;
+  const adopted = Causa.applyProposals(lastAuto.engagement, lastProposals);
+  const loaded = Causa.buildEngagement(adopted.engagement, (f) => lastAuto.contents[f]);
+  const statement = Causa.runStatement(loaded.inputs, loaded.config);
+  const h = statement.headers;
+  const rows = statement.workflows
+    .map((w) => {
+      const flags = w.integrity.findings.filter((f) => f.severity !== "info");
+      const stampCls = w.verdict.verdict === "EXPAND" ? "stamp expand" : "stamp";
+      return `<div class="row" style="margin-top:10px">
+        <span class="tnum">${esc(w.workflowId)} — ${gi(w.claimed)} claimed → ${gi(w.verified)} verified → <span style="color:var(--ledger)">${gi(w.attributable)} attributable</span> · grade ${esc(w.estimator.grade)} · ${usdC(w.spendCents)} spend${flags.length ? ` · <span class="warn"><b>${flags.length} integrity ${flags.length === 1 ? "flag" : "flags"}</b> (${flags.map((f) => esc(f.check)).join(", ")})</span>` : ""}</span>
+        <span class="${stampCls}">${esc(w.verdict.verdict)}</span>
+      </div>`;
+    })
+    .join("");
+  $("settled").innerHTML = `
+    <div class="row"><span class="big tnum" style="font-size:24px;font-weight:500">${gi(h.claimed)} claimed → ${gi(h.verified)} verified → <span style="color:var(--ledger)">${gi(h.attributable)} attributable</span></span></div>
+    ${rows}
+    <p style="color:var(--text-dim);font-size:13px;margin:10px 0 0">
+      ${adopted.notes.map(esc).join("<br>")}
+    </p>
+    <details><summary>full settled statement (engine output, verbatim)</summary><pre>${esc(Causa.renderStatement(statement))}</pre></details>`;
+  $("settledLevers").innerHTML = "";
+  $("settledWrap").classList.remove("hidden");
+  $("settledWrap").scrollIntoView({ behavior: "smooth", block: "start" });
+});
 
 function CausaAuto(files) {
   const contents = {};
